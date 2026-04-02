@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+import logging
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+import redis.asyncio as aioredis
+import structlog
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from src.api.router import v1_router
+from src.config import Settings
+from src.mcp.server import init_mcp, mcp
+from src.services.cache import CacheService
+
+
+def configure_logging() -> None:
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.filter_by_level,
+            structlog.stdlib.add_logger_name,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.UnicodeDecoder(),
+            structlog.dev.ConsoleRenderer()
+            if os.getenv("ENV", "dev") == "dev"
+            else structlog.processors.JSONRenderer(),
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+    logging.basicConfig(format="%(message)s", level=logging.INFO)
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    configure_logging()
+
+    if settings is None:
+        settings = Settings()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+        # Startup
+        redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+        cache_service = CacheService(redis_client, ttl=settings.cache_ttl_seconds)
+        app.state.settings = settings
+        app.state.redis = redis_client
+        app.state.cache = cache_service
+        app.state.mcp = mcp
+        init_mcp(settings, cache_service, http_client=getattr(app.state, "http_client", None))
+        storage_path = Path(settings.storage_dir)
+        storage_path.mkdir(parents=True, exist_ok=True)
+        yield
+        # Shutdown
+        await redis_client.aclose()
+
+    app = FastAPI(
+        title="Image Service",
+        version="0.1.0",
+        lifespan=lifespan,
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[],  # Explicit: no open CORS by default
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+    )
+
+    # Static file serving for generated images
+    storage_path = Path(settings.storage_dir)
+    storage_path.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        settings.static_url_prefix,
+        StaticFiles(directory=str(storage_path)),
+        name="images",
+    )
+
+    app.include_router(v1_router, prefix="/v1")
+
+    # Mount MCP server
+    app.mount("/mcp", mcp.http_app())
+
+    return app

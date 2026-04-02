@@ -1,0 +1,15 @@
+.env
+storage/images/*
+!storage/images/.gitkeep
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+.DS_Store
+*.tmp
+*.swp
