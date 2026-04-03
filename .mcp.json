@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "image-service": {
-      "type": "url",
+      "type": "http",
       "url": "http://localhost:8090/mcp"
     }
   }

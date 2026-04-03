@@ -47,6 +47,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings is None:
         settings = Settings()
 
+    mcp_app = mcp.http_app(path="/mcp")
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         # Startup
@@ -59,7 +61,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         init_mcp(settings, cache_service, http_client=getattr(app.state, "http_client", None))
         storage_path = Path(settings.storage_dir)
         storage_path.mkdir(parents=True, exist_ok=True)
-        yield
+        async with mcp_app.lifespan(app):
+            yield
         # Shutdown
         await redis_client.aclose()
 
@@ -88,6 +91,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(v1_router, prefix="/v1")
 
     # Mount MCP server
-    app.mount("/mcp", mcp.http_app())
+    app.mount("/", mcp_app)
 
     return app
