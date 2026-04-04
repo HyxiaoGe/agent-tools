@@ -20,26 +20,21 @@ FAKE_PNG_B64 = (
 )
 
 
-def make_openrouter_response(image_b64: str = FAKE_PNG_B64) -> dict:
-    """Build a fake OpenRouter chat completions response with an image.
-
-    Uses the message.images[] format per OpenRouter docs.
-    """
+def make_gemini_response(image_b64: str = FAKE_PNG_B64) -> dict:
+    """Build a fake Gemini generateContent response with an image."""
     return {
-        "id": "gen-test-123",
-        "choices": [
+        "candidates": [
             {
-                "message": {
-                    "role": "assistant",
-                    "content": "Here is your generated image.",
-                    "images": [
+                "content": {
+                    "parts": [
                         {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{image_b64}",
-                            },
+                            "inlineData": {
+                                "mimeType": "image/png",
+                                "data": image_b64,
+                            }
                         }
                     ],
+                    "role": "model",
                 }
             }
         ],
@@ -47,10 +42,10 @@ def make_openrouter_response(image_b64: str = FAKE_PNG_B64) -> dict:
 
 
 class MockTransport(httpx.AsyncBaseTransport):
-    """Mock httpx transport that returns canned OpenRouter responses."""
+    """Mock httpx transport that returns canned Gemini responses."""
 
     def __init__(self, response_data: dict | None = None, status_code: int = 200):
-        self._response_data = response_data or make_openrouter_response()
+        self._response_data = response_data or make_gemini_response()
         self._status_code = status_code
         self.call_count = 0
 
@@ -77,11 +72,11 @@ def fake_redis():
 @pytest.fixture
 def settings(tmp_storage: Path) -> Settings:
     return Settings(
-        openrouter_api_key="sk-test-key",
+        google_api_key="test-api-key",
         redis_url="redis://localhost:6379/0",
         storage_dir=str(tmp_storage),
         static_url_prefix="/static/images",
-        default_model="google/gemini-2.5-flash-image",
+        default_model="gemini-3-pro-image-preview",
         rate_limit_global=20,
         rate_limit_per_ip=5,
         rate_limit_window=60,
@@ -98,15 +93,12 @@ def mock_transport() -> MockTransport:
 def app(settings: Settings, fake_redis, mock_transport: MockTransport) -> FastAPI:
     application = create_app(settings=settings)
 
-    # Override lifespan-managed state for tests
     cache_service = CacheService(fake_redis, ttl=settings.cache_ttl_seconds)
     application.state.settings = settings
     application.state.redis = fake_redis
     application.state.cache = cache_service
-    # Inject mock http client for upstream calls
     mock_http = httpx.AsyncClient(transport=mock_transport)
     application.state.http_client = mock_http
-    # Init MCP with test dependencies
     application.state.mcp = mcp
     init_mcp(settings, cache_service, http_client=mock_http)
 

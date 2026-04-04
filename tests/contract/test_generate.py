@@ -17,7 +17,7 @@ async def test_generate_success(client: httpx.AsyncClient):
     data = resp.json()
     assert "id" in data
     assert "image_url" in data
-    assert data["model"] == "google/gemini-2.5-flash-image"
+    assert data["model"] == "gemini-3-pro-image-preview"
     assert data["cached"] is False
     assert "created_at" in data
     # Image should be accessible via static files

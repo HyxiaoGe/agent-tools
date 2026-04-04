@@ -22,6 +22,6 @@ async def test_list_models(client: httpx.AsyncClient):
         assert "provider" in model
 
     ids = [m["id"] for m in models]
-    assert "google/gemini-2.5-flash-image" in ids
-    assert "openai/gpt-5-image-mini" in ids
-    assert "openai/gpt-5-image" in ids
+    assert "gemini-3-pro-image-preview" in ids
+    assert "gemini-3.1-flash-image-preview" in ids
+    assert "gemini-2.5-flash-image" in ids

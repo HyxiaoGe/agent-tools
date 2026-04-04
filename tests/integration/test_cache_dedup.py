@@ -12,7 +12,7 @@ async def test_cache_dedup_same_prompt(
     mock_transport,
 ):
     """T017: Same prompt+model generates once, second call returns cached."""
-    payload = {"prompt": "a sunset over mountains", "model": "google/gemini-2.5-flash-image"}
+    payload = {"prompt": "a sunset over mountains", "model": "gemini-3-pro-image-preview"}
 
     # First request — cache miss
     resp1 = await client.post("/v1/generate", json=payload)

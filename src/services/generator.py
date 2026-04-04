@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,45 +26,36 @@ class GenerationError(Exception):
         super().__init__(message)
 
 
-async def call_openrouter(
+async def call_gemini(
     prompt: str,
     model: str,
     settings: Settings,
     style: str | None = None,
-    aspect_ratio: str = "1:1",
-    size: str = "1024x1024",
     http_client: httpx.AsyncClient | None = None,
 ) -> tuple[bytes, str]:
-    """Call OpenRouter API and return (image_bytes, format_ext)."""
+    """Call Google Gemini API directly and return (image_bytes, format_ext)."""
     content = prompt
     if style:
         content = f"{prompt}, style: {style}"
 
-    payload: dict = {
-        "model": model,
-        "messages": [{"role": "user", "content": content}],
-        "modalities": ["image", "text"],
-        "image_config": {
-            "aspect_ratio": aspect_ratio,
-            "image_size": _map_size(size),
-        },
-        "stream": False,
-        "max_tokens": 4096,
+    payload = {
+        "contents": [{"parts": [{"text": content}]}],
+        "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]},
     }
 
-    headers = {
-        "Authorization": f"Bearer {settings.openrouter_api_key}",
-        "Content-Type": "application/json",
-    }
-    url = f"{settings.openrouter_base_url}/chat/completions"
+    url = f"{settings.google_api_base_url}/models/{model}:generateContent?key={settings.google_api_key}"
 
-    logger.info("openrouter_request", model=model, aspect_ratio=aspect_ratio, size=size)
+    logger.info("gemini_request", model=model)
 
     if http_client is not None:
-        resp = await http_client.post(url, headers=headers, json=payload)
+        resp = await http_client.post(
+            url, headers={"Content-Type": "application/json"}, json=payload
+        )
     else:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(url, headers=headers, json=payload)
+            resp = await client.post(
+                url, headers={"Content-Type": "application/json"}, json=payload
+            )
 
     if resp.status_code != 200:
         error_msg = "upstream error"
@@ -74,63 +64,26 @@ async def call_openrouter(
             error_msg = error_data.get("error", {}).get("message", error_msg)
         except Exception:
             pass
-        raise GenerationError(f"Upstream provider error: {error_msg}")
+        raise GenerationError(f"Gemini API error: {error_msg}")
 
     data = resp.json()
-    choices = data.get("choices", [])
-    if not choices:
-        raise GenerationError("No choices returned from upstream provider")
+    candidates = data.get("candidates", [])
+    if not candidates:
+        raise GenerationError("No candidates returned from Gemini")
 
-    message = choices[0].get("message", {})
+    parts = candidates[0].get("content", {}).get("parts", [])
 
-    # Primary: OpenRouter returns images in message.images[]
-    images = message.get("images", [])
-    if images:
-        for img in images:
-            if img.get("type") == "image_url":
-                data_url = img["image_url"]["url"]
-                return _decode_data_url(data_url)
+    # Find image part (inlineData)
+    for part in parts:
+        if "inlineData" in part:
+            inline = part["inlineData"]
+            mime_type = inline.get("mimeType", "image/png")
+            image_bytes = base64.b64decode(inline["data"])
+            # Extract format from mimeType: "image/jpeg" -> "jpeg"
+            fmt = mime_type.split("/")[-1] if "/" in mime_type else "png"
+            return image_bytes, fmt
 
-    # Fallback: some models return images in message.content[] (multimodal content parts)
-    content_parts = message.get("content", [])
-    if isinstance(content_parts, list):
-        for part in content_parts:
-            if isinstance(part, dict) and part.get("type") == "image_url":
-                data_url = part["image_url"]["url"]
-                return _decode_data_url(data_url)
-
-    raise GenerationError("No image content in upstream response")
-
-
-def _map_size(size: str) -> str:
-    """Map WxH size string to OpenRouter image_size parameter.
-
-    Most models support 1K and 2K. 0.5K and 4K have limited support.
-    """
-    m = re.fullmatch(r"(\d+)x(\d+)", size)
-    if not m:
-        return "1K"
-    max_dim = max(int(m.group(1)), int(m.group(2)))
-    if max_dim <= 1024:
-        return "1K"
-    if max_dim <= 2048:
-        return "2K"
-    return "4K"
-
-
-def _decode_data_url(data_url: str) -> tuple[bytes, str]:
-    """Decode a base64 data URL and return (bytes, extension)."""
-    match = re.match(r"data:image/(\w+);base64,(.+)", data_url, re.DOTALL)
-    if match:
-        fmt = match.group(1)
-        b64 = match.group(2)
-    else:
-        # Assume raw base64 PNG
-        fmt = "png"
-        b64 = data_url
-
-    image_bytes = base64.b64decode(b64)
-    return image_bytes, fmt
+    raise GenerationError("No image content in Gemini response")
 
 
 def save_image(image_bytes: bytes, cache_key: str, fmt: str, storage_dir: str) -> str:
@@ -176,7 +129,6 @@ async def handle_generate(
     # Acquire lock (thundering herd protection)
     lock_acquired = await cache.acquire_lock(cache_key)
     if not lock_acquired:
-        # Another request is generating this image; wait and check cache
         for _ in range(20):
             await asyncio.sleep(0.5)
             cached = await cache.get_cached(cache_key)
@@ -191,25 +143,20 @@ async def handle_generate(
         raise GenerationError("Generation timed out waiting for lock")
 
     try:
-        # Call upstream
-        image_bytes, fmt = await call_openrouter(
+        image_bytes, fmt = await call_gemini(
             prompt=request.prompt,
             model=model,
             settings=settings,
             style=request.style,
-            aspect_ratio=request.aspect_ratio,
-            size=request.size,
             http_client=http_client,
         )
 
-        # Save to disk
         filename = save_image(image_bytes, cache_key, fmt, settings.storage_dir)
 
         gen_id = str(uuid.uuid4())
         image_url = f"{settings.static_url_prefix}/{filename}"
         created_at = datetime.now(timezone.utc).isoformat()
 
-        # Store in cache
         metadata = {
             "id": gen_id,
             "image_url": image_url,

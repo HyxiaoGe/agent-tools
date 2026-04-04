@@ -20,11 +20,11 @@ def rate_limit_settings(tmp_path) -> Settings:
     storage = tmp_path / "images"
     storage.mkdir()
     return Settings(
-        openrouter_api_key="sk-test-key",
+        google_api_key="test-api-key",
         redis_url="redis://localhost:6379/0",
         storage_dir=str(storage),
         static_url_prefix="/static/images",
-        default_model="google/gemini-2.5-flash-image",
+        default_model="gemini-3-pro-image-preview",
         rate_limit_global=5,  # Low limits for testing
         rate_limit_per_ip=3,
         rate_limit_window=60,

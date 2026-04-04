@@ -22,7 +22,7 @@ async def test_generate_image_tool(client: httpx.AsyncClient, app):
     assert len(text_parts) > 0
     combined = "\n".join(text_parts)
     assert "/static/images/" in combined
-    assert "google/gemini-2.5-flash-image" in combined
+    assert "gemini-3-pro-image-preview" in combined
 
 
 @pytest.mark.asyncio
@@ -35,6 +35,6 @@ async def test_list_models_tool(app):
 
     text_parts = [p.text for p in result.content if hasattr(p, "text")]
     combined = "\n".join(text_parts)
+    assert "Gemini 3 Pro Image" in combined
+    assert "Gemini 3.1 Flash Image" in combined
     assert "Gemini 2.5 Flash Image" in combined
-    assert "GPT-5 Image Mini" in combined
-    assert "GPT-5 Image" in combined
