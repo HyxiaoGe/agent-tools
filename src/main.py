@@ -47,7 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings is None:
         settings = Settings()
 
-    mcp_app = mcp.http_app(path="/mcp")
+    mcp_app = mcp.http_app(path="/mcp", stateless_http=True)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
