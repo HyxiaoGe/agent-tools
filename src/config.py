@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     google_api_key: str = Field(..., description="Google AI Studio API key")
     google_api_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
-    default_model: str = "nano-banana-pro-preview"
+    default_model: str = "gemini-3.1-flash-image-preview"
     redis_url: str = "redis://redis:6379/0"
     storage_dir: str = "storage/images"
     static_url_prefix: str = "/static/images"

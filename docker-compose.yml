@@ -5,6 +5,10 @@ services:
       - "8090:8090"
     env_file:
       - .env
+    environment:
+      - HTTP_PROXY=http://host.docker.internal:7897
+      - HTTPS_PROXY=http://host.docker.internal:7897
+      - NO_PROXY=redis,localhost,127.0.0.1
     volumes:
       - ./storage:/app/storage
     depends_on:

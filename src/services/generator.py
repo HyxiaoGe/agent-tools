@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,7 +53,8 @@ async def call_gemini(
             url, headers={"Content-Type": "application/json"}, json=payload
         )
     else:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+        async with httpx.AsyncClient(timeout=120.0, proxy=proxy) as client:
             resp = await client.post(
                 url, headers={"Content-Type": "application/json"}, json=payload
             )
