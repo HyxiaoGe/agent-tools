@@ -27,6 +27,10 @@ class GenerationError(Exception):
         super().__init__(message)
 
 
+MAX_RETRIES = 2
+REQUEST_TIMEOUT = 300.0  # 5 minutes — complex prompts can take a while
+
+
 async def call_gemini(
     prompt: str,
     model: str,
@@ -45,19 +49,33 @@ async def call_gemini(
     }
 
     url = f"{settings.google_api_base_url}/models/{model}:generateContent?key={settings.google_api_key}"
+    headers = {"Content-Type": "application/json"}
 
-    logger.info("gemini_request", model=model)
-
-    if http_client is not None:
-        resp = await http_client.post(
-            url, headers={"Content-Type": "application/json"}, json=payload
-        )
-    else:
-        proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
-        async with httpx.AsyncClient(timeout=120.0, proxy=proxy) as client:
-            resp = await client.post(
-                url, headers={"Content-Type": "application/json"}, json=payload
+    resp = None
+    for attempt in range(1, MAX_RETRIES + 2):  # 1 initial + MAX_RETRIES retries
+        logger.info("gemini_request", model=model, attempt=attempt)
+        try:
+            if http_client is not None:
+                resp = await http_client.post(url, headers=headers, json=payload)
+            else:
+                proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+                async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, proxy=proxy) as client:
+                    resp = await client.post(url, headers=headers, json=payload)
+            break  # Success, exit retry loop
+        except httpx.TimeoutException:
+            logger.warning("gemini_timeout", model=model, attempt=attempt)
+            if attempt < MAX_RETRIES + 1:
+                await asyncio.sleep(2)  # Brief pause before retry
+                continue
+            raise GenerationError(
+                f"Upstream request timed out after {MAX_RETRIES + 1} attempts, please retry"
             )
+        except httpx.ConnectError:
+            logger.warning("gemini_connect_error", model=model, attempt=attempt)
+            if attempt < MAX_RETRIES + 1:
+                await asyncio.sleep(2)
+                continue
+            raise GenerationError("Cannot connect to Gemini API after retries")
 
     if resp.status_code != 200:
         error_msg = "upstream error"
