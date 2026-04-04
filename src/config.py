@@ -12,6 +12,11 @@ class ModelInfo:
 
 
 SUPPORTED_MODELS: dict[str, ModelInfo] = {
+    "nano-banana-pro-preview": ModelInfo(
+        id="nano-banana-pro-preview",
+        name="Nano Banana Pro",
+        provider="Google",
+    ),
     "gemini-3-pro-image-preview": ModelInfo(
         id="gemini-3-pro-image-preview",
         name="Gemini 3 Pro Image",
@@ -37,7 +42,7 @@ class Settings(BaseSettings):
 
     google_api_key: str = Field(..., description="Google AI Studio API key")
     google_api_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
-    default_model: str = "gemini-3-pro-image-preview"
+    default_model: str = "nano-banana-pro-preview"
     redis_url: str = "redis://redis:6379/0"
     storage_dir: str = "storage/images"
     static_url_prefix: str = "/static/images"
