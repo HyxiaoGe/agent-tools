@@ -1,0 +1,16 @@
+name: Deploy to Dev Server
+on:
+  push:
+    branches: ["master"]
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy
+        run: |
+          cd ~/project/image-service
+          git pull
+          docker compose up -d --build
+          docker image prune -f
