@@ -12,6 +12,7 @@ dependencies = [
     "structlog>=24.4.0",
     "fastmcp>=2.0.0",
     "python-multipart>=0.0.18",
+    "prometheus-client>=0.21.0",
 ]
 
 [project.optional-dependencies]

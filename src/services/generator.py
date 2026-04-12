@@ -11,6 +11,12 @@ import httpx
 import structlog
 
 from src.config import SUPPORTED_MODELS, Settings
+from src.services.metrics import (
+    CACHE_HITS,
+    GENERATION_DURATION,
+    GENERATION_ERRORS,
+    REQUEST_COUNT,
+)
 from src.models.request import GenerateRequest
 from src.models.response import GenerateResponse
 from src.services.cache import CacheService, compute_cache_key
@@ -138,6 +144,8 @@ async def handle_generate(
     # Check cache
     cached = await cache.get_cached(cache_key)
     if cached is not None:
+        CACHE_HITS.inc()
+        REQUEST_COUNT.labels(model=model, status="cached").inc()
         return GenerateResponse(
             id=cached["id"],
             image_url=cached["image_url"],
@@ -163,13 +171,14 @@ async def handle_generate(
         raise GenerationError("Generation timed out waiting for lock")
 
     try:
-        image_bytes, fmt = await call_gemini(
-            prompt=request.prompt,
-            model=model,
-            settings=settings,
-            style=request.style,
-            http_client=http_client,
-        )
+        with GENERATION_DURATION.labels(model=model).time():
+            image_bytes, fmt = await call_gemini(
+                prompt=request.prompt,
+                model=model,
+                settings=settings,
+                style=request.style,
+                http_client=http_client,
+            )
 
         filename = save_image(image_bytes, cache_key, fmt, settings.storage_dir)
 
@@ -185,6 +194,7 @@ async def handle_generate(
         }
         await cache.set_cached(cache_key, metadata)
 
+        REQUEST_COUNT.labels(model=model, status="success").inc()
         return GenerateResponse(
             id=gen_id,
             image_url=image_url,
@@ -192,5 +202,9 @@ async def handle_generate(
             cached=False,
             created_at=created_at,
         )
+    except GenerationError:
+        GENERATION_ERRORS.labels(model=model, error_type="generation").inc()
+        REQUEST_COUNT.labels(model=model, status="error").inc()
+        raise
     finally:
         await cache.release_lock(cache_key)

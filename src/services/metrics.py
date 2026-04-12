@@ -1,0 +1,27 @@
+from __future__ import annotations
+
+from prometheus_client import Counter, Histogram
+
+REQUEST_COUNT = Counter(
+    "image_requests_total",
+    "Total image generation requests",
+    ["model", "status"],
+)
+
+GENERATION_DURATION = Histogram(
+    "image_generation_duration_seconds",
+    "Time spent generating an image (excludes cache hits)",
+    ["model"],
+    buckets=(1, 2, 5, 10, 20, 30, 60, 120, 300),
+)
+
+CACHE_HITS = Counter(
+    "image_cache_hits_total",
+    "Total cache hits for image generation",
+)
+
+GENERATION_ERRORS = Counter(
+    "image_generation_errors_total",
+    "Total image generation errors",
+    ["model", "error_type"],
+)

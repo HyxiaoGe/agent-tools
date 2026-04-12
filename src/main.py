@@ -9,7 +9,9 @@ import redis.asyncio as aioredis
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
+from prometheus_client import generate_latest
 
 from src.api.router import v1_router
 from src.config import Settings
@@ -87,6 +89,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         StaticFiles(directory=str(storage_path)),
         name="images",
     )
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics() -> Response:
+        return Response(content=generate_latest(), media_type="text/plain; version=0.0.4; charset=utf-8")
 
     app.include_router(v1_router, prefix="/v1")
 
