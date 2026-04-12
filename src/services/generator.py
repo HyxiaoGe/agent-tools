@@ -4,22 +4,22 @@ import asyncio
 import base64
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import structlog
 
 from src.config import SUPPORTED_MODELS, Settings
+from src.models.request import GenerateRequest
+from src.models.response import GenerateResponse
+from src.services.cache import CacheService, compute_cache_key
 from src.services.metrics import (
     CACHE_HITS,
     GENERATION_DURATION,
     GENERATION_ERRORS,
     REQUEST_COUNT,
 )
-from src.models.request import GenerateRequest
-from src.models.response import GenerateResponse
-from src.services.cache import CacheService, compute_cache_key
 
 logger = structlog.get_logger()
 
@@ -75,13 +75,13 @@ async def call_gemini(
                 continue
             raise GenerationError(
                 f"Upstream request timed out after {MAX_RETRIES + 1} attempts, please retry"
-            )
+            ) from None
         except httpx.ConnectError:
             logger.warning("gemini_connect_error", model=model, attempt=attempt)
             if attempt < MAX_RETRIES + 1:
                 await asyncio.sleep(2)
                 continue
-            raise GenerationError("Cannot connect to Gemini API after retries")
+            raise GenerationError("Cannot connect to Gemini API after retries") from None
 
     if resp.status_code != 200:
         error_msg = "upstream error"
@@ -137,9 +137,7 @@ async def handle_generate(
             status_code=400,
         )
 
-    cache_key = compute_cache_key(
-        request.prompt, model, request.aspect_ratio, request.size, request.style
-    )
+    cache_key = compute_cache_key(request.prompt, model, request.aspect_ratio, request.size, request.style)
 
     # Check cache
     cached = await cache.get_cached(cache_key)
@@ -184,7 +182,7 @@ async def handle_generate(
 
         gen_id = str(uuid.uuid4())
         image_url = f"{settings.static_url_prefix}/{filename}"
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = datetime.now(UTC).isoformat()
 
         metadata = {
             "id": gen_id,

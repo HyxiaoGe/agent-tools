@@ -16,10 +16,7 @@ async def check_rate_limit(request: Request) -> JSONResponse | None:
     window = int(time.time()) // settings.rate_limit_window
     # Prefer X-Forwarded-For for reverse proxy deployments (take first/leftmost IP)
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        client_ip = forwarded.split(",")[0].strip()
-    else:
-        client_ip = request.client.host if request.client else "unknown"
+    client_ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
 
     global_key = f"ratelimit:global:{window}"
     ip_key = f"ratelimit:ip:{client_ip}:{window}"

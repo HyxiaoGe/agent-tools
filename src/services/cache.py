@@ -13,9 +13,7 @@ LOCK_POLL_INTERVAL = 0.5
 LOCK_MAX_WAIT = 60
 
 
-def compute_cache_key(
-    prompt: str, model: str, aspect_ratio: str, size: str, style: str | None = None
-) -> str:
+def compute_cache_key(prompt: str, model: str, aspect_ratio: str, size: str, style: str | None = None) -> str:
     """Compute SHA-256 cache key from normalized generation parameters."""
     style_part = (style or "").strip().lower()
     raw = f"{prompt.strip().lower()}:{model.lower()}:{aspect_ratio}:{size}:{style_part}"

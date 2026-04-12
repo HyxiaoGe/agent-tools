@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
+import fakeredis.aioredis
 import httpx
 import pytest
 from fastapi import FastAPI
 
 from src.config import Settings
 from src.main import create_app
-from src.services.cache import CacheService
 from src.mcp.server import init_mcp, mcp
+from src.services.cache import CacheService
 from tests.conftest import MockTransport
-
-import fakeredis.aioredis
 
 
 @pytest.fixture
@@ -66,7 +65,7 @@ async def test_per_ip_rate_limit(rate_limit_client: httpx.AsyncClient):
             "/v1/generate",
             json={"prompt": f"unique prompt {i}"},
         )
-        assert resp.status_code == 200, f"Request {i+1} should succeed"
+        assert resp.status_code == 200, f"Request {i + 1} should succeed"
 
     # 4th request should be rate limited (per_ip limit is 3)
     resp = await rate_limit_client.post(
@@ -90,7 +89,7 @@ async def test_global_rate_limit(rate_limit_client: httpx.AsyncClient, rate_limi
             "/v1/generate",
             json={"prompt": f"global test prompt {i}"},
         )
-        assert resp.status_code == 200, f"Request {i+1} should succeed"
+        assert resp.status_code == 200, f"Request {i + 1} should succeed"
 
     # 6th request should hit global limit (global limit is 5)
     resp = await rate_limit_client.post(

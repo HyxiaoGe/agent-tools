@@ -10,8 +10,5 @@ router = APIRouter()
 
 @router.get("/models", response_model=ModelsListResponse)
 async def list_models() -> ModelsListResponse:
-    models = [
-        ModelInfoResponse(id=m.id, name=m.name, provider=m.provider)
-        for m in SUPPORTED_MODELS.values()
-    ]
+    models = [ModelInfoResponse(id=m.id, name=m.name, provider=m.provider) for m in SUPPORTED_MODELS.values()]
     return ModelsListResponse(models=models)

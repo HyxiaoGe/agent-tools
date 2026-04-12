@@ -1,29 +1,44 @@
-# image-service Development Guidelines
+# image-service
 
-Auto-generated from all feature plans. Last updated: 2026-04-01
+AI image generation middleware. Wraps Google Gemini API behind a FastAPI REST + MCP interface with Redis caching, rate limiting, and Prometheus metrics.
 
-## Active Technologies
+## Architecture
 
-- Python 3.11+ + FastAPI, FastMCP, httpx (async), Redis (001-ai-image-gen)
+- `src/api/` -- REST endpoints (generate, models, health)
+- `src/services/` -- business logic (generator, cache, metrics)
+- `src/middleware/` -- auth (Bearer token) and rate limiting
+- `src/models/` -- Pydantic request/response schemas
+- `src/mcp/` -- FastMCP tool server (generate_image, list_models)
+- `src/config.py` -- Settings via pydantic-settings, supported model registry
+- `src/main.py` -- App factory, lifespan, CORS, static files, metrics endpoint
 
-## Project Structure
+## Key constraints
 
-```text
-src/
-tests/
+- Python 3.11+ required
+- Redis required at runtime (caching + rate limiting + lock)
+- Google API key required (`GOOGLE_API_KEY` env var)
+- Upstream timeout: 300s per generation request, 2 retries on timeout/connect errors
+- Cache TTL: 7 days; thundering-herd protection via Redis locks
+- Rate limits: 20 global / 5 per-IP per minute window
+
+## Dev commands
+
+```bash
+uv run uvicorn src.main:create_app --factory --reload --port 8090   # run dev server
+uv run pytest                                                        # run tests
+/opt/homebrew/bin/ruff check . && /opt/homebrew/bin/ruff format .     # lint + format
+python scripts/check_architecture.py                                 # layer dependency check
 ```
 
-## Commands
+## Config
 
-cd src [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLOGIES] pytest [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLOGIES] ruff check .
+Env vars loaded from `.env` (see `.env.example`). Key settings: `GOOGLE_API_KEY`, `REDIS_URL`, `DEFAULT_MODEL`, `API_KEY` (optional auth), `SERVICE_BASE_URL`.
 
-## Code Style
+## Docs index
 
-Python 3.11+: Follow standard conventions
+- `docs/ARCHITECTURE.md` -- layer diagram and data flow
+- `docs/CODING_CONVENTIONS.md` -- code style and project rules
 
-## Recent Changes
+## Deployment
 
-- 001-ai-image-gen: Added Python 3.11+ + FastAPI, FastMCP, httpx (async), Redis
-
-<!-- MANUAL ADDITIONS START -->
-<!-- MANUAL ADDITIONS END -->
+Docker Compose on dev server (192.168.1.10). CI runs ruff lint + architecture check before deploy. Port 8090.

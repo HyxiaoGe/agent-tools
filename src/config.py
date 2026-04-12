@@ -36,9 +36,7 @@ SUPPORTED_MODELS: dict[str, ModelInfo] = {
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     google_api_key: str = Field(..., description="Google AI Studio API key")
     google_api_base_url: str = "https://generativelanguage.googleapis.com/v1beta"

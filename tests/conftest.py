@@ -12,12 +12,8 @@ from src.main import create_app
 from src.mcp.server import init_mcp, mcp
 from src.services.cache import CacheService
 
-
 # A minimal 1x1 red PNG for test fixtures
-FAKE_PNG_B64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4"
-    "nGP4z8BQDwAEgAF/pooBPQAAAABJRU5ErkJggg=="
-)
+FAKE_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8BQDwAEgAF/pooBPQAAAABJRU5ErkJggg=="
 
 
 def make_gemini_response(image_b64: str = FAKE_PNG_B64) -> dict:
