@@ -2,16 +2,13 @@ services:
   image-service:
     build: .
     container_name: image-service
-    ports:
-      - "8090:8090"
+    network_mode: host
     env_file:
       - .env
     environment:
-      - HTTP_PROXY=http://host.docker.internal:7897
-      - HTTPS_PROXY=http://host.docker.internal:7897
+      - HTTP_PROXY=http://127.0.0.1:7897
+      - HTTPS_PROXY=http://127.0.0.1:7897
       - NO_PROXY=localhost,127.0.0.1
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ./storage:/app/storage
     deploy:
