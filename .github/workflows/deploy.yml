@@ -11,6 +11,6 @@ jobs:
       - name: Deploy
         run: |
           cd ~/project/image-service
-          git pull
+          git pull origin main
           docker compose up -d --build
           docker image prune -f
