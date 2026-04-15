@@ -17,21 +17,25 @@ FAKE_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8BQ
 
 
 def make_gemini_response(image_b64: str = FAKE_PNG_B64) -> dict:
-    """Build a fake Gemini generateContent response with an image."""
+    """Build a fake LiteLLM Proxy OpenAI-compatible response with an image."""
     return {
-        "candidates": [
+        "choices": [
             {
-                "content": {
-                    "parts": [
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "images": [
                         {
-                            "inlineData": {
-                                "mimeType": "image/png",
-                                "data": image_b64,
-                            }
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_b64}",
+                            },
+                            "index": 0,
+                            "type": "image_url",
                         }
                     ],
-                    "role": "model",
-                }
+                },
             }
         ],
     }
@@ -68,7 +72,7 @@ def fake_redis():
 @pytest.fixture
 def settings(tmp_storage: Path) -> Settings:
     return Settings(
-        google_api_key="test-api-key",
+        litellm_api_key="test-api-key",
         redis_url="redis://localhost:6379/0",
         storage_dir=str(tmp_storage),
         static_url_prefix="/static/images",

@@ -19,7 +19,7 @@ def rate_limit_settings(tmp_path) -> Settings:
     storage = tmp_path / "images"
     storage.mkdir()
     return Settings(
-        google_api_key="test-api-key",
+        litellm_api_key="test-api-key",
         redis_url="redis://localhost:6379/0",
         storage_dir=str(storage),
         static_url_prefix="/static/images",

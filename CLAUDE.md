@@ -16,7 +16,7 @@ AI image generation middleware. Wraps Google Gemini API behind a FastAPI REST + 
 
 - Python 3.11+ required
 - Redis required at runtime (caching + rate limiting + lock)
-- Google API key required (`GOOGLE_API_KEY` env var)
+- LiteLLM Proxy required (`LITELLM_BASE_URL`, `LITELLM_API_KEY` env vars)
 - Upstream timeout: 300s per generation request, 2 retries on timeout/connect errors
 - Cache TTL: 7 days; thundering-herd protection via Redis locks
 - Rate limits: 20 global / 5 per-IP per minute window
@@ -32,7 +32,7 @@ python scripts/check_architecture.py                                 # layer dep
 
 ## Config
 
-Env vars loaded from `.env` (see `.env.example`). Key settings: `GOOGLE_API_KEY`, `REDIS_URL`, `DEFAULT_MODEL`, `API_KEY` (optional auth), `SERVICE_BASE_URL`.
+Env vars loaded from `.env` (see `.env.example`). Key settings: `LITELLM_BASE_URL`, `LITELLM_API_KEY`, `REDIS_URL`, `DEFAULT_MODEL`, `API_KEY` (optional auth), `SERVICE_BASE_URL`.
 
 ## Docs index
 

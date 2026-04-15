@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -44,18 +43,22 @@ async def call_gemini(
     style: str | None = None,
     http_client: httpx.AsyncClient | None = None,
 ) -> tuple[bytes, str]:
-    """Call Google Gemini API directly and return (image_bytes, format_ext)."""
+    """Call LiteLLM Proxy (OpenAI-compatible) and return (image_bytes, format_ext)."""
     content = prompt
     if style:
         content = f"{prompt}, style: {style}"
 
     payload = {
-        "contents": [{"parts": [{"text": content}]}],
-        "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]},
+        "model": f"gemini/{model}",
+        "messages": [{"role": "user", "content": content}],
+        "modalities": ["text", "image"],
     }
 
-    url = f"{settings.google_api_base_url}/models/{model}:generateContent?key={settings.google_api_key}"
-    headers = {"Content-Type": "application/json"}
+    url = f"{settings.litellm_base_url}/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {settings.litellm_api_key}",
+    }
 
     resp = None
     for attempt in range(1, MAX_RETRIES + 2):  # 1 initial + MAX_RETRIES retries
@@ -64,8 +67,7 @@ async def call_gemini(
             if http_client is not None:
                 resp = await http_client.post(url, headers=headers, json=payload)
             else:
-                proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
-                async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, proxy=proxy) as client:
+                async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
                     resp = await client.post(url, headers=headers, json=payload)
             break  # Success, exit retry loop
         except httpx.TimeoutException:
@@ -81,7 +83,7 @@ async def call_gemini(
             if attempt < MAX_RETRIES + 1:
                 await asyncio.sleep(2)
                 continue
-            raise GenerationError("Cannot connect to Gemini API after retries") from None
+            raise GenerationError("Cannot connect to LiteLLM Proxy after retries") from None
 
     if resp.status_code != 200:
         error_msg = "upstream error"
@@ -90,26 +92,27 @@ async def call_gemini(
             error_msg = error_data.get("error", {}).get("message", error_msg)
         except Exception:
             pass
-        raise GenerationError(f"Gemini API error: {error_msg}")
+        raise GenerationError(f"LiteLLM Proxy error: {error_msg}")
 
     data = resp.json()
-    candidates = data.get("candidates", [])
-    if not candidates:
-        raise GenerationError("No candidates returned from Gemini")
+    choices = data.get("choices", [])
+    if not choices:
+        raise GenerationError("No choices returned from LiteLLM Proxy")
 
-    parts = candidates[0].get("content", {}).get("parts", [])
+    message = choices[0].get("message", {})
+    images = message.get("images", [])
 
-    # Find image part (inlineData)
-    for part in parts:
-        if "inlineData" in part:
-            inline = part["inlineData"]
-            mime_type = inline.get("mimeType", "image/png")
-            image_bytes = base64.b64decode(inline["data"])
-            # Extract format from mimeType: "image/jpeg" -> "jpeg"
+    for img in images:
+        data_url = img.get("image_url", {}).get("url", "")
+        if data_url.startswith("data:"):
+            # Parse "data:image/jpeg;base64,<data>"
+            header, _, b64_data = data_url.partition(",")
+            mime_type = header.split(";")[0].replace("data:", "")
+            image_bytes = base64.b64decode(b64_data)
             fmt = mime_type.split("/")[-1] if "/" in mime_type else "png"
             return image_bytes, fmt
 
-    raise GenerationError("No image content in Gemini response")
+    raise GenerationError("No image content in LiteLLM Proxy response")
 
 
 def save_image(image_bytes: bytes, cache_key: str, fmt: str, storage_dir: str) -> str:

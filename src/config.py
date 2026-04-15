@@ -38,8 +38,8 @@ SUPPORTED_MODELS: dict[str, ModelInfo] = {
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    google_api_key: str = Field(..., description="Google AI Studio API key")
-    google_api_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    litellm_base_url: str = Field("http://localhost:4000", description="LiteLLM Proxy URL")
+    litellm_api_key: str = Field("", description="LiteLLM Virtual Key")
     default_model: str = "gemini-3.1-flash-image-preview"
     redis_url: str = "redis://redis:6379/0"
     storage_dir: str = "storage/images"
