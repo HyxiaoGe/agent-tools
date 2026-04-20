@@ -11,7 +11,7 @@ jobs:
       - name: Ruff lint
         run: ~/.local/bin/ruff check .
       - name: Architecture check
-        run: python scripts/check_architecture.py
+        run: python3 scripts/check_architecture.py
   deploy:
     needs: check
     runs-on: self-hosted
