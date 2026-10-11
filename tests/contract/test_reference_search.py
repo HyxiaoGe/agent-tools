@@ -52,7 +52,7 @@ class Web(httpx.AsyncBaseTransport):
             ],
             "images": [],
         }
-        # index -> (matches_consensus, view); unlisted images fail.
+        # url -> (matches_consensus, view[, whole_device=True]); unlisted images fail.
         self.verdicts: dict[str, tuple[bool, str]] = {
             BACK: (True, "back"),
             BACK_2: (True, "back"),
@@ -91,8 +91,17 @@ class Web(httpx.AsyncBaseTransport):
             return self.judge_response
         images = []
         for i, url in enumerate(self.judged_urls(len(self.judge_calls()) - 1)):
-            ok, view = self.verdicts.get(url, (False, "other"))
-            images.append({"index": i, "matches_consensus": ok, "view": view, "kind": "official_render", "reason": "r"})
+            ok, view, whole, *_ = (*self.verdicts.get(url, (False, "other")), True)
+            images.append(
+                {
+                    "index": i,
+                    "matches_consensus": ok,
+                    "view": view,
+                    "whole_device": whole,
+                    "kind": "photo",
+                    "reason": "r",
+                }
+            )
         content = json.dumps({"consensus_appearance": "wide camera plateau", "images": images})
         return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
 
@@ -316,7 +325,7 @@ async def test_rule_filters_before_judging(client, web):
     page = "https://www.apple.com/img/page"
     dup = "https://www.apple.com/img/back-copy.png"
     private = "http://127.0.0.1/secret.png"
-    web.files[small] = httpx.Response(200, content=png(600, 900, b"small"))
+    web.files[small] = httpx.Response(200, content=png(599, 900, b"small"))
     web.files[page] = httpx.Response(200, text="<html>instagram</html>")
     web.files[dup] = httpx.Response(200, content=web.files[BACK].content)
     web.verdicts[dup] = web.verdicts[BACK]  # the mock judge can't tell identical bytes apart
@@ -486,3 +495,107 @@ async def test_generation_cache_ttl_follows_search_outcome(client, web, app, fak
 
     [key] = [k async for k in fake_redis.scan_iter("image:*")]
     assert expected - 5 < await fake_redis.ttl(key) <= expected
+
+
+@pytest.mark.asyncio
+async def test_whole_back_view_beats_close_up(client, web):
+    # Both apple backs are cropped close-ups: the complete media back wins despite its domain.
+    web.verdicts[BACK] = web.verdicts[BACK_2] = (True, "back", False)
+
+    data = (await post(client, reference_subject="iPhone 18 Pro")).json()
+
+    assert data["reference_images_used"] == [MEDIA_BACK]
+    [payload] = web.judge_calls()
+    assert '"whole_device": bool' in payload["messages"][0]["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_og_sized_official_images_are_judged(client, web):
+    og = "https://www.apple.com/img/og.png"
+    web.files[og] = httpx.Response(200, content=png(1200, 630, b"og"))
+    web.verdicts[og] = (True, "back")
+    web.tavily_default["results"][0]["images"] = [{"url": og}]
+    web.tavily_default["results"][1]["images"] = []
+
+    data = (await post(client, reference_subject="iPhone 18 Pro")).json()
+
+    assert data["reference_images_used"] == [og]
+
+
+# --- reference hint appended to the prompt ------------------------------------
+
+HINT = "参考图是 iPhone 18 Pro 的真实照片，外观以它为准。"
+
+
+def sent_text(web: Web, call: int = -1) -> str:
+    content = web.generations()[call]["messages"][0]["content"]
+    return content if isinstance(content, str) else content[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_found_reference_appends_hint(client, web):
+    await post(client, reference_subject="iPhone 18 Pro")
+
+    assert sent_text(web) == "iPhone 18 Pro launch poster\n" + HINT
+
+
+@pytest.mark.asyncio
+async def test_hint_on_subject_cache_hit_and_not_in_generation_cache_key(client, web):
+    await post(client, reference_subject="iPhone 18 Pro")
+    await post(client, prompt="another poster", reference_subject="iPhone 18 Pro")
+    again = (await post(client, reference_subject="iPhone 18 Pro")).json()
+
+    assert sent_text(web) == "another poster\n" + HINT
+    assert again["cached"] is True  # same request → same cache entry; the hint isn't keyed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["none_accepted", "search_failed", "caller_refs_only", "no_subject"])
+async def test_no_hint_without_found_images(client, web, app, case):
+    body = {"reference_subject": "iPhone 18 Pro"}
+    if case == "none_accepted":
+        web.verdicts = {}
+    elif case == "search_failed":
+        web.tavily = [httpx.Response(500)]
+    else:
+        caller = "https://img.example.com/caller.png"
+        web.files[caller] = httpx.Response(200, content=png(1000, 1000, b"caller"))
+        body = {"reference_images": [caller]} if case == "caller_refs_only" else {}
+
+    await post(client, **body)
+
+    assert sent_text(web) == "iPhone 18 Pro launch poster"
+
+
+@pytest.mark.asyncio
+async def test_hint_reaches_seedream_fallback(client, web, app):
+    from tests.conftest import make_seedream_response
+
+    app.state.settings.ark_api_key = "k"
+    original = web.handle_async_request
+
+    async def route(request):
+        if request.url.path.endswith("/images/generations"):
+            web.requests.append(request)
+            return httpx.Response(200, json=make_seedream_response())
+        if request.url.path.endswith("/chat/completions") and json.loads(request.content)["model"] != JUDGE_MODEL:
+            web.requests.append(request)
+            return httpx.Response(
+                200, json={"choices": [{"finish_reason": "content_filter", "message": {"content": None}}]}
+            )
+        return await original(request)
+
+    web.handle_async_request = route
+    data = (await post(client, reference_subject="iPhone 18 Pro", fallback_model="doubao-seedream-5-0-pro")).json()
+
+    assert data["fallback_used"] is True
+    [ark] = [json.loads(r.content) for r in web.requests if r.url.path.endswith("/images/generations")]
+    assert ark["prompt"].endswith(HINT)
+
+
+def test_cache_keys_are_versioned():
+    from src.services.cache import compute_cache_key
+
+    assert reference_search._cache_key("iPhone 18 Pro").startswith("refsearch:v2:")
+    old = compute_cache_key("p", "m", "1:1", "1024x1024", None, None, False, None, None)
+    assert compute_cache_key("p", "m", "1:1", "1024x1024", None, None, False, None, "iPhone 18 Pro") != old
