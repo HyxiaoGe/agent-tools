@@ -29,6 +29,9 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         tavily_pool_patch = patch("main._tavily_pool", main.TavilyKeyPool([]))
         tavily_pool_patch.start()
         self.addCleanup(tavily_pool_patch.stop)
+        firecrawl_pool_patch = patch("main._firecrawl_pool", main.FirecrawlKeyPool([]))
+        firecrawl_pool_patch.start()
+        self.addCleanup(firecrawl_pool_patch.stop)
         # 这组用例覆盖 Tavily/Jina 链路；直接读取另见 DirectReadTests。
         direct_patch = patch("main.read_direct", new=AsyncMock(return_value=None))
         self.read_direct = direct_patch.start()
@@ -436,6 +439,58 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("COPY scripts/ scripts/", dockerfile)
         self.assertIn("-e TAVILY_API_KEYS=${{ secrets.TAVILY_API_KEYS }}", workflow)
+        self.assertIn("-e FIRECRAWL_API_KEYS=${{ secrets.FIRECRAWL_API_KEYS }}", workflow)
+
+    def test_firecrawl_key_check_script_never_prints_keys(self):
+        script_path = Path(__file__).with_name("scripts") / "check_firecrawl_keys.py"
+        spec = importlib.util.spec_from_file_location("check_firecrawl_keys", script_path)
+        check = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(check)
+        request = httpx.Request("GET", check.FIRECRAWL_CREDIT_URL)
+        responses = {
+            "fc-good": httpx.Response(
+                200,
+                json={"data": {"remainingCredits": 76000, "planCredits": 1000}},
+                request=request,
+            ),
+            "fc-empty": httpx.Response(
+                200, json={"data": {"remainingCredits": 0}}, request=request
+            ),
+            "fc-bad": httpx.Response(401, request=request),
+        }
+
+        class FakeClient:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def get(self, _url, headers):
+                return responses[headers["Authorization"].removeprefix("Bearer ")]
+
+        stdout = io.StringIO()
+        with (
+            patch.dict(
+                "os.environ",
+                {"FIRECRAWL_API_KEYS": "fc-good, fc-empty,fc-bad,fc-good"},
+            ),
+            patch.object(check.httpx, "Client", FakeClient),
+            redirect_stdout(stdout),
+        ):
+            exit_code = check.main()
+
+        output = stdout.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("key#1 ok remaining=76000 plan=1000", output)
+        self.assertIn("key#2 exhausted", output)
+        self.assertIn("key#3 http_status=401", output)
+        self.assertIn("key#4 duplicate", output)
+        self.assertIn("usable=1/4", output)
+        self.assertNotIn("fc-", output)
 
     async def test_failure_without_retry_window_does_not_retry(self):
         self.client.get.side_effect = httpx.ReadTimeout("超时")
@@ -762,6 +817,150 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.provider, "jina")
         self.assertEqual(self._used_keys(), ["k1"])
         self.assertEqual(pool.available_count(), 2)
+
+    def _firecrawl_response(
+        self, markdown: str = "# 页面标题\n正文", page_status: int = 200, title=None
+    ) -> httpx.Response:
+        request = httpx.Request("POST", main.FIRECRAWL_SCRAPE_URL)
+        metadata = {"statusCode": page_status}
+        if title is not None:
+            metadata["title"] = title
+        return httpx.Response(
+            200,
+            json={"success": True, "data": {"markdown": markdown, "metadata": metadata}},
+            request=request,
+        )
+
+    async def test_firecrawl_success_wins_while_jina_still_reading(self):
+        self.client.post.return_value = self._firecrawl_response(title="Firecrawl 标题")
+        self.client.get.side_effect = self._hang
+
+        with patch("main._firecrawl_pool", main.FirecrawlKeyPool(["fc-test"])):
+            response = await main.read_url(self.url)
+
+        self.assertEqual(response.provider, "firecrawl")
+        self.assertEqual(response.title, "Firecrawl 标题")
+        self.assertEqual(response.content, "# 页面标题\n正文")
+        call = self.client.post.await_args
+        self.assertEqual(call.args[0], main.FIRECRAWL_SCRAPE_URL)
+        self.assertEqual(call.kwargs["headers"]["Authorization"], "Bearer fc-test")
+        self.assertEqual(call.kwargs["json"]["url"], self.url)
+        self.assertEqual(call.kwargs["json"]["formats"], ["markdown"])
+        self.assertTrue(call.kwargs["json"]["onlyMainContent"])
+
+    async def test_firecrawl_full_mode_requests_whole_page(self):
+        self.client.post.return_value = self._firecrawl_response()
+        self.client.get.side_effect = self._hang
+
+        with patch("main._firecrawl_pool", main.FirecrawlKeyPool(["fc-test"])):
+            response = await main.read_url(self.url, full=True)
+
+        self.assertEqual(response.provider, "firecrawl")
+        self.assertFalse(self.client.post.await_args.kwargs["json"]["onlyMainContent"])
+
+    async def test_firecrawl_error_page_is_not_used_as_content(self):
+        self.client.post.return_value = self._firecrawl_response("找不到页面", 404)
+        self.client.get.return_value = self._jina_success()
+
+        with (
+            patch("main._firecrawl_pool", main.FirecrawlKeyPool(["fc-test"])),
+            self.assertLogs("reader_service", level=logging.WARNING) as logs,
+        ):
+            response = await main.read_url(self.url)
+
+        self.assertEqual(response.provider, "jina")
+        joined = "\n".join(logs.output)
+        self.assertIn("reader_firecrawl_fallback", joined)
+        self.assertIn("kind=page_status", joined)
+
+    async def test_tavily_and_firecrawl_race_together(self):
+        async def slow_tavily(*_args, **_kwargs):
+            await asyncio.sleep(0.2)
+            return self._tavily_response([{"url": self.url, "raw_content": "正文"}])
+
+        async def post(target, **kwargs):
+            if target == main.FIRECRAWL_SCRAPE_URL:
+                return self._firecrawl_response()
+            return await slow_tavily()
+
+        self.client.post.side_effect = post
+        self.client.get.side_effect = self._hang
+
+        with (
+            patch("main._tavily_pool", main.TavilyKeyPool(["tvly-test"])),
+            patch("main._firecrawl_pool", main.FirecrawlKeyPool(["fc-test"])),
+        ):
+            response = await main.read_url(self.url)
+
+        self.assertEqual(response.provider, "firecrawl")
+        self.assertEqual(response.attempts, 2)
+
+    async def test_firecrawl_uses_keys_in_order_and_falls_over_on_rate_limit(self):
+        pool = main.FirecrawlKeyPool(["k1", "k2", "k3"])
+        self.client.get.side_effect = self._hang
+
+        with (
+            patch("main._firecrawl_pool", pool),
+            patch("main._wall_time", return_value=1000.0),
+        ):
+            self.client.post.return_value = self._firecrawl_response()
+            await main.read_url(self.url)
+            await main.read_url(self.url)
+            self.assertEqual(self._used_keys(), ["k1", "k1"])
+
+            self.client.post.reset_mock()
+            self.client.post.return_value = None
+            self.client.post.side_effect = [
+                self._status_error(429),
+                self._firecrawl_response(),
+                self._firecrawl_response(),
+            ]
+            response = await main.read_url(self.url)
+            self.assertEqual(response.provider, "firecrawl")
+            await main.read_url(self.url)
+            self.assertEqual(self._used_keys(), ["k1", "k2", "k2"])
+
+        self.client.post.reset_mock()
+        self.client.post.side_effect = None
+        self.client.post.return_value = self._firecrawl_response()
+        with (
+            patch("main._firecrawl_pool", pool),
+            patch("main._wall_time", return_value=1031.0),
+        ):
+            await main.read_url(self.url)
+        self.assertEqual(self._used_keys(), ["k1"])
+
+    async def test_firecrawl_page_level_failures_do_not_burn_keys(self):
+        for status_code in (403, 408, 500):
+            with self.subTest(status_code=status_code):
+                pool = main.FirecrawlKeyPool(["k1", "k2"])
+                self.client.post.reset_mock()
+                self.client.post.side_effect = self._status_error(status_code)
+                self.client.get.return_value = self._jina_success()
+
+                with patch("main._firecrawl_pool", pool):
+                    response = await main.read_url(self.url)
+
+                self.assertEqual(response.provider, "jina")
+                self.assertEqual(self._used_keys(), ["k1"])
+                self.assertEqual(pool.available_count(), 2)
+
+    async def test_all_firecrawl_keys_unavailable_degrades_health(self):
+        pool = main.FirecrawlKeyPool(["k1", "k2"])
+        self.client.post.side_effect = [self._status_error(402), self._status_error(401)]
+        self.client.get.return_value = self._jina_success()
+
+        with patch("main._firecrawl_pool", pool):
+            response = await main.read_url(self.url)
+            self.assertEqual(response.provider, "jina")
+            degraded = await main.health()
+
+        self.assertEqual(degraded.status_code, 503)
+        body = json.loads(degraded.body)
+        self.assertEqual(body["firecrawl_account"]["key_statuses"], {"1": 402, "2": 401})
+        self.assertIn("Firecrawl", body["firecrawl_account"]["message"])
+        self.assertNotIn("tavily_account", body)
+        self.assertNotIn("k1", degraded.body.decode())
 
     async def test_client_uses_split_timeout_configuration(self):
         request = httpx.Request("GET", "https://r.jina.ai/https://example.com")
