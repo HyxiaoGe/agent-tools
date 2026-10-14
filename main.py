@@ -1,6 +1,7 @@
 """
 reader-service — 网页内容读取微服务
-先直接抓取 HTML 提取正文；不适用时用 Tavily Extract，再失败回退 Jina Reader
+先直接抓取 HTML 提取正文；直接抓取失败或迟迟没有结果时，同时请求 Tavily Extract
+与 Jina Reader，谁先读到用谁，整个请求受同一个总时限约束。
 """
 
 import asyncio
@@ -32,12 +33,14 @@ JINA_READ_TIMEOUT = max(
 )
 JINA_WRITE_TIMEOUT = float(os.getenv("JINA_WRITE_TIMEOUT", "3"))
 JINA_POOL_TIMEOUT = float(os.getenv("JINA_POOL_TIMEOUT", "2"))
-JINA_TOTAL_TIMEOUT = float(os.getenv("JINA_TOTAL_TIMEOUT", "18"))
+# 一次读取的总时限：直接抓取、Tavily、Jina 都在这个时限内完成，超时就放弃该网页。
+# 调用方会并行读多个网页、等最慢的那个，读不到的网页要尽快放弃，免得拖住整轮。
+READ_TOTAL_TIMEOUT = float(os.getenv("READ_TOTAL_TIMEOUT", "10"))
+# 直接抓取在这段时间内没有结果（或已经失败）就同时请求 Tavily 和 Jina；直接抓取继续跑，三路谁先读到用谁。
+DIRECT_HEDGE_DELAY = float(os.getenv("DIRECT_HEDGE_DELAY", "1.5"))
 JINA_RETRY_BACKOFF = float(os.getenv("JINA_RETRY_BACKOFF", "0.2"))
-JINA_MIN_RETRY_WINDOW = max(
-    JINA_MIN_READ_TIMEOUT,
-    float(os.getenv("JINA_MIN_RETRY_WINDOW", "10")),
-)
+# Jina 首次失败后剩余时间不足这么多就不再重试，重试也来不及读完。
+JINA_MIN_RETRY_WINDOW = float(os.getenv("JINA_MIN_RETRY_WINDOW", "4"))
 JINA_MAX_ATTEMPTS = 2
 TAVILY_EXTRACT_URL = "https://api.tavily.com/extract"
 # 号池：逗号分隔的多个 key，轮询使用；兼容单 key 的 TAVILY_API_KEY
@@ -46,7 +49,7 @@ TAVILY_API_KEYS = [
     for key in os.getenv("TAVILY_API_KEYS", os.getenv("TAVILY_API_KEY", "")).split(",")
     if key.strip()
 ]
-# 实测 Tavily p90 约 3s；超过上限就把剩余总预算留给 Jina 回退
+# 实测 Tavily p90 约 3s；同时还受整次读取的总时限约束
 TAVILY_TIMEOUT = float(os.getenv("TAVILY_TIMEOUT", "8"))
 # Tavily 账户级失败按 key 冷却：密钥无效一直停用到重启；额度用完隔天再试
 # （各账户计费周期不同，按天重试最省事且失败很快）；限流短暂冷却。
@@ -321,6 +324,97 @@ async def health():
     return {"status": "ok"}
 
 
+class _JinaOutcome:
+    """Jina 读取的结果；超时被取消时也保留已用的尝试次数，供失败详情使用。"""
+
+    def __init__(self) -> None:
+        self.attempts = 0
+        self.response: httpx.Response | None = None
+        self.error_status = 504
+        self.error_kind = "timeout"
+        self.error_message = "Jina Reader 请求超时"
+        self.error_retryable = True
+        self.upstream_status: int | None = None
+
+
+async def _read_with_jina(url: str, deadline: float, outcome: _JinaOutcome) -> None:
+    """读取成功时写入 outcome.response；失败时写入错误信息，可重试的错误在时限内重试一次。"""
+    jina_url = f"{JINA_BASE_URL}/{url}"
+    headers = {"Accept": "text/markdown"}
+    if JINA_API_KEY:
+        headers["Authorization"] = f"Bearer {JINA_API_KEY}"
+
+    while outcome.attempts < JINA_MAX_ATTEMPTS:
+        remaining = deadline - _monotonic()
+        if remaining <= 0:
+            return
+        outcome.attempts += 1
+        try:
+            resp = await asyncio.wait_for(
+                _fetch_jina(jina_url, headers, _timeout_for(remaining)),
+                timeout=remaining,
+            )
+            if _monotonic() > deadline:
+                raise asyncio.TimeoutError
+            outcome.response = resp
+            return
+        except (httpx.TimeoutException, asyncio.TimeoutError):
+            outcome.error_status = 504
+            outcome.error_kind = "timeout"
+            outcome.error_message = "Jina Reader 请求超时"
+            outcome.error_retryable = True
+            outcome.upstream_status = None
+        except httpx.HTTPStatusError as exc:
+            upstream_status = exc.response.status_code
+            outcome.upstream_status = upstream_status
+            outcome.error_status = 502
+            if upstream_status in (401, 403):
+                outcome.error_kind = "upstream_auth"
+                outcome.error_message = "Jina Reader 上游鉴权失败"
+                outcome.error_retryable = False
+            elif upstream_status == 402:
+                outcome.error_kind = "upstream_auth"
+                outcome.error_message = "Jina Reader 账户余额不足"
+                outcome.error_retryable = False
+            elif upstream_status == 429:
+                outcome.error_status = 503
+                outcome.error_kind = "rate_limited"
+                outcome.error_message = "Jina Reader 上游限流"
+                outcome.error_retryable = True
+            else:
+                outcome.error_kind = "upstream_error"
+                outcome.error_message = f"Jina Reader 上游返回 HTTP {upstream_status}"
+                outcome.error_retryable = upstream_status >= 500
+        except httpx.RequestError:
+            outcome.error_status = 502
+            outcome.error_kind = "request_error"
+            outcome.error_message = "Jina Reader 请求失败"
+            outcome.error_retryable = True
+            outcome.upstream_status = None
+        except Exception:
+            outcome.error_status = 502
+            outcome.error_kind = "request_error"
+            outcome.error_message = "Jina Reader 请求失败"
+            outcome.error_retryable = False
+            outcome.upstream_status = None
+
+        remaining = deadline - _monotonic()
+        if not (
+            outcome.error_retryable
+            and outcome.attempts < JINA_MAX_ATTEMPTS
+            and remaining - JINA_RETRY_BACKOFF >= JINA_MIN_RETRY_WINDOW
+        ):
+            _set_account_failure(outcome.upstream_status, outcome.error_message)
+            return
+        await asyncio.sleep(JINA_RETRY_BACKOFF)
+
+
+async def _cancel(tasks: set[asyncio.Task]) -> None:
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
 @app.get("/read", response_model=ReadResponse)
 async def read_url(
     url: str = Query(..., description="要读取的网页 URL"),
@@ -337,176 +431,87 @@ async def read_url(
         raise HTTPException(status_code=422, detail="URL 格式无效")
 
     start = _monotonic()
+    deadline = start + READ_TOTAL_TIMEOUT
     domain = hostname
     favicon = f"{GOOGLE_FAVICON_API}{parsed.netloc}"
 
-    # 直接抓取只给正文，导航不会占满调用方的正文窗口；表格、列表类页面可能提取不全，
-    # 调用方需要整页时传 full=true 走原链路。
-    page = None if full else await read_direct(url, domain)
-    if page is not None:
+    def respond(content: str, title: str | None, provider: str, attempts: int) -> ReadResponse:
         fetch_ms = int((_monotonic() - start) * 1000)
         logger.info(
-            "reader_read_succeeded domain=%s provider=direct status=200 "
-            "attempts=1 duration_ms=%s",
+            "reader_read_succeeded domain=%s provider=%s status=200 "
+            "attempts=%s duration_ms=%s",
             domain,
+            provider,
+            attempts,
             fetch_ms,
         )
         return ReadResponse(
             url=url,
-            title=_extract_title(page.content, page.title),
-            content=page.content,
+            title=_extract_title(content, title),
+            content=content,
             favicon=favicon,
-            content_length=len(page.content),
+            content_length=len(content),
             fetch_ms=fetch_ms,
-            attempts=1,
-            provider="direct",
+            attempts=attempts,
+            provider=provider,
         )
 
-    # Tavily 尝试计入 attempts；直接抓取已花掉的时间同样从 Jina 总预算里扣除
+    # 直接抓取只给正文，导航不会占满调用方的正文窗口；表格、列表类页面可能提取不全，
+    # 调用方需要整页时传 full=true 跳过它。
+    direct_task = None if full else asyncio.create_task(read_direct(url, domain))
+    tavily_task = None
     tavily_attempts = 0
-    first_budget = JINA_TOTAL_TIMEOUT - (_monotonic() - start)
-    if _tavily_pool:
-        tavily_attempts = 1
-        extracted = await _read_with_tavily(url, domain)
-        if extracted is not None:
-            content, title = extracted
-            fetch_ms = int((_monotonic() - start) * 1000)
-            logger.info(
-                "reader_read_succeeded domain=%s provider=tavily status=200 "
-                "attempts=1 duration_ms=%s",
-                domain,
-                fetch_ms,
+    jina = _JinaOutcome()
+    pending = {direct_task} if direct_task is not None else set()
+    try:
+        if direct_task is not None:
+            await asyncio.wait(pending, timeout=DIRECT_HEDGE_DELAY)
+            if direct_task.done():
+                pending.discard(direct_task)
+                if (page := direct_task.result()) is not None:
+                    return respond(page.content, page.title, "direct", 1)
+
+        if _tavily_pool:
+            tavily_task = asyncio.create_task(_read_with_tavily(url, domain))
+            tavily_attempts = 1
+            pending.add(tavily_task)
+        jina_task = asyncio.create_task(_read_with_jina(url, deadline, jina))
+        pending.add(jina_task)
+
+        while pending:
+            remaining = deadline - _monotonic()
+            if remaining <= 0:
+                break
+            done, pending = await asyncio.wait(
+                pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
             )
-            return ReadResponse(
-                url=url,
-                title=_extract_title(content, title),
-                content=content,
-                favicon=favicon,
-                content_length=len(content),
-                fetch_ms=fetch_ms,
-                attempts=1,
-                provider="tavily",
-            )
-        first_budget = JINA_TOTAL_TIMEOUT - (_monotonic() - start)
+            if direct_task in done and (page := direct_task.result()) is not None:
+                return respond(page.content, page.title, "direct", 1)
+            if tavily_task in done and (extracted := tavily_task.result()) is not None:
+                return respond(extracted[0], extracted[1], "tavily", tavily_attempts)
+            if jina_task in done:
+                jina_task.result()
+                if jina.response is not None:
+                    _clear_account_failure()
+                    return respond(
+                        jina.response.text,
+                        jina.response.headers.get("x-title"),
+                        "jina",
+                        jina.attempts + tavily_attempts,
+                    )
+    finally:
+        await _cancel(pending)
 
-    # 调用 Jina Reader
-    jina_url = f"{JINA_BASE_URL}/{url}"
-    headers = {"Accept": "text/markdown"}
-    if JINA_API_KEY:
-        headers["Authorization"] = f"Bearer {JINA_API_KEY}"
-
-    deadline = start + JINA_TOTAL_TIMEOUT
-    attempts = 0
-    error_status = 504
-    error_kind = "timeout"
-    error_message = "Jina Reader 请求超时"
-    error_retryable = True
-    upstream_status = None
-
-    while attempts < JINA_MAX_ATTEMPTS:
-        remaining = first_budget if attempts == 0 else deadline - _monotonic()
-        if remaining <= 0:
-            detail = _error_detail(
-                kind=error_kind,
-                message=error_message,
-                retryable=error_retryable,
-                upstream_status=upstream_status,
-                attempts=attempts + tavily_attempts,
-                started_at=start,
-            )
-            _raise_reader_error(status_code=error_status, domain=domain, detail=detail)
-
-        attempts += 1
-
-        try:
-            timeout = _timeout_for(remaining)
-            resp = await asyncio.wait_for(
-                _fetch_jina(jina_url, headers, timeout), timeout=remaining
-            )
-            if _monotonic() > deadline:
-                raise asyncio.TimeoutError
-            break
-        except (httpx.TimeoutException, asyncio.TimeoutError):
-            error_status = 504
-            error_kind = "timeout"
-            error_message = "Jina Reader 请求超时"
-            error_retryable = True
-            upstream_status = None
-        except httpx.HTTPStatusError as exc:
-            upstream_status = exc.response.status_code
-            error_status = 502
-            if upstream_status in (401, 403):
-                error_kind = "upstream_auth"
-                error_message = "Jina Reader 上游鉴权失败"
-                error_retryable = False
-            elif upstream_status == 402:
-                error_kind = "upstream_auth"
-                error_message = "Jina Reader 账户余额不足"
-                error_retryable = False
-            elif upstream_status == 429:
-                error_status = 503
-                error_kind = "rate_limited"
-                error_message = "Jina Reader 上游限流"
-                error_retryable = True
-            else:
-                error_kind = "upstream_error"
-                error_message = f"Jina Reader 上游返回 HTTP {upstream_status}"
-                error_retryable = upstream_status >= 500
-        except httpx.RequestError:
-            error_status = 502
-            error_kind = "request_error"
-            error_message = "Jina Reader 请求失败"
-            error_retryable = True
-            upstream_status = None
-        except Exception:
-            error_status = 502
-            error_kind = "request_error"
-            error_message = "Jina Reader 请求失败"
-            error_retryable = False
-            upstream_status = None
-
-        remaining = deadline - _monotonic()
-        can_retry = (
-            error_retryable
-            and attempts < JINA_MAX_ATTEMPTS
-            and remaining - JINA_RETRY_BACKOFF >= JINA_MIN_RETRY_WINDOW
-        )
-        if can_retry:
-            await asyncio.sleep(min(JINA_RETRY_BACKOFF, remaining))
-            continue
-
-        _set_account_failure(upstream_status, error_message)
-        detail = _error_detail(
-            kind=error_kind,
-            message=error_message,
-            retryable=error_retryable,
-            upstream_status=upstream_status,
-            attempts=attempts + tavily_attempts,
-            started_at=start,
-        )
-        _raise_reader_error(status_code=error_status, domain=domain, detail=detail)
-
-    _clear_account_failure()
-    fetch_ms = int((_monotonic() - start) * 1000)
-    content = resp.text
-    logger.info(
-        "reader_read_succeeded domain=%s provider=jina status=200 attempts=%s "
-        "duration_ms=%s",
-        domain,
-        attempts + tavily_attempts,
-        fetch_ms,
+    # 都没读到：Jina 已结束就报它的错误，仍在读则按超时处理。
+    detail = _error_detail(
+        kind=jina.error_kind,
+        message=jina.error_message,
+        retryable=jina.error_retryable,
+        upstream_status=jina.upstream_status,
+        attempts=jina.attempts + tavily_attempts,
+        started_at=start,
     )
-
-    return ReadResponse(
-        url=url,
-        title=_extract_title(content, resp.headers.get("x-title")),
-        content=content,
-        favicon=favicon,
-        content_length=len(content),
-        fetch_ms=fetch_ms,
-        attempts=attempts + tavily_attempts,
-        provider="jina",
-    )
+    _raise_reader_error(status_code=jina.error_status, domain=domain, detail=detail)
 
 
 if __name__ == "__main__":

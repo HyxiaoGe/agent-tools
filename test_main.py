@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import io
 import json
@@ -32,6 +33,10 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         direct_patch = patch("main.read_direct", new=AsyncMock(return_value=None))
         self.read_direct = direct_patch.start()
         self.addCleanup(direct_patch.stop)
+
+    @staticmethod
+    async def _hang(*_args, **_kwargs):
+        await asyncio.Event().wait()
 
     @staticmethod
     def _status_error(status_code: int) -> httpx.HTTPStatusError:
@@ -432,26 +437,11 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("COPY scripts/ scripts/", dockerfile)
         self.assertIn("-e TAVILY_API_KEYS=${{ secrets.TAVILY_API_KEYS }}", workflow)
 
-    async def test_total_deadline_prevents_second_attempt_without_budget(self):
+    async def test_failure_without_retry_window_does_not_retry(self):
         self.client.get.side_effect = httpx.ReadTimeout("超时")
 
         with (
-            patch("main._monotonic", side_effect=[0.0, 0.0, 18.0, 18.0]),
-            patch("main.asyncio.sleep", new=AsyncMock()) as sleep,
-        ):
-            with self.assertRaises(HTTPException) as raised:
-                await main.read_url(self.url)
-
-        self.assertEqual(raised.exception.detail["kind"], "timeout")
-        self.assertEqual(raised.exception.detail["attempts"], 1)
-        self.assertEqual(self.client.get.await_count, 1)
-        sleep.assert_not_awaited()
-
-    async def test_slow_failure_without_ten_second_retry_window_does_not_retry(self):
-        self.client.get.side_effect = httpx.ReadTimeout("慢请求超时")
-
-        with (
-            patch("main._monotonic", side_effect=[0.0, 0.0, 8.1, 8.1, 8.1, 8.1]),
+            patch("main.READ_TOTAL_TIMEOUT", 0.5),
             patch("main.asyncio.sleep", new=AsyncMock()) as sleep,
         ):
             with self.assertRaises(HTTPException) as raised:
@@ -470,8 +460,9 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.client.get.side_effect = [httpx.ReadTimeout("第一次超时"), success]
 
         with (
-            patch("main._monotonic", side_effect=[0.0, 0.0, 7.8, 18.01, 18.02]),
-            patch("main.asyncio.sleep", new=AsyncMock()) as sleep,
+            patch("main.READ_TOTAL_TIMEOUT", 0.2),
+            patch("main.JINA_MIN_RETRY_WINDOW", -1.0),
+            patch("main.JINA_RETRY_BACKOFF", 0.5),
         ):
             with self.assertRaises(HTTPException) as raised:
                 await main.read_url(self.url)
@@ -480,22 +471,19 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.detail["kind"], "timeout")
         self.assertEqual(raised.exception.detail["attempts"], 1)
         self.assertEqual(self.client.get.await_count, 1)
-        sleep.assert_awaited_once()
 
-    async def test_success_completed_after_total_deadline_is_rejected(self):
-        request = httpx.Request("GET", "https://r.jina.ai/https://example.com")
-        self.client.get.return_value = httpx.Response(
-            200, text="过期结果", request=request
-        )
+    async def test_slow_jina_is_abandoned_at_total_deadline(self):
+        self.client.get.side_effect = self._hang
 
-        with patch("main._monotonic", side_effect=[0.0, 0.0, 18.01, 18.02, 18.03]):
+        started = asyncio.get_running_loop().time()
+        with patch("main.READ_TOTAL_TIMEOUT", 0.2):
             with self.assertRaises(HTTPException) as raised:
                 await main.read_url(self.url)
 
+        self.assertLess(asyncio.get_running_loop().time() - started, 1.0)
         self.assertEqual(raised.exception.status_code, 504)
         self.assertEqual(raised.exception.detail["kind"], "timeout")
         self.assertEqual(raised.exception.detail["attempts"], 1)
-        self.assertEqual(self.client.get.await_count, 1)
 
     @staticmethod
     def _tavily_response(results: list, status_code: int = 200) -> httpx.Response:
@@ -509,10 +497,11 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         request = httpx.Request("GET", "https://r.jina.ai/https://example.com")
         return httpx.Response(200, text=text, request=request)
 
-    async def test_tavily_success_skips_jina(self):
+    async def test_tavily_success_wins_while_jina_still_reading(self):
         self.client.post.return_value = self._tavily_response(
             [{"url": self.url, "title": "Tavily 标题", "raw_content": "正文内容"}]
         )
+        self.client.get.side_effect = self._hang
 
         with patch("main._tavily_pool", main.TavilyKeyPool(["tvly-test"])):
             response = await main.read_url(self.url)
@@ -521,7 +510,6 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.content, "正文内容")
         self.assertEqual(response.title, "Tavily 标题")
         self.assertEqual(response.attempts, 1)
-        self.client.get.assert_not_awaited()
         call = self.client.post.await_args
         self.assertEqual(call.args[0], main.TAVILY_EXTRACT_URL)
         self.assertEqual(call.kwargs["headers"]["Authorization"], "Bearer tvly-test")
@@ -532,6 +520,7 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.client.post.return_value = self._tavily_response(
             [{"url": self.url, "raw_content": "# 页面标题\n正文"}]
         )
+        self.client.get.side_effect = self._hang
 
         with patch("main._tavily_pool", main.TavilyKeyPool(["tvly-test"])):
             response = await main.read_url(self.url)
@@ -584,30 +573,68 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(f"kind={kind}", "\n".join(logs.output))
                 self.assertEqual(await main.health(), {"status": "ok"})
 
-    async def test_direct_read_time_is_deducted_from_jina_budget(self):
-        # 第二个时间点是直接读取结束：已用完总预算时不再请求 Jina
-        with patch("main._monotonic", side_effect=[0.0, 18.0, 18.0, 18.0]):
+    async def test_slow_direct_read_hedges_to_providers(self):
+        async def slow_direct(*_args):
+            await asyncio.sleep(5)
+
+        self.read_direct.side_effect = slow_direct
+        self.client.get.return_value = self._jina_success()
+
+        started = asyncio.get_running_loop().time()
+        with patch("main.DIRECT_HEDGE_DELAY", 0.05):
+            response = await main.read_url(self.url)
+
+        self.assertLess(asyncio.get_running_loop().time() - started, 1.0)
+        self.assertEqual(response.provider, "jina")
+
+    async def test_failed_direct_read_starts_providers_without_waiting(self):
+        self.client.get.return_value = self._jina_success()
+
+        started = asyncio.get_running_loop().time()
+        with patch("main.DIRECT_HEDGE_DELAY", 5.0):
+            response = await main.read_url(self.url)
+
+        self.assertLess(asyncio.get_running_loop().time() - started, 1.0)
+        self.assertEqual(response.provider, "jina")
+
+    async def test_direct_read_finishing_after_hedge_can_still_win(self):
+        async def late_direct(*_args):
+            await asyncio.sleep(0.1)
+            return direct_read.DirectPage(content="直接读取的正文", title="直接标题")
+
+        self.read_direct.side_effect = late_direct
+        self.client.get.side_effect = self._hang
+
+        with patch("main.DIRECT_HEDGE_DELAY", 0.01):
+            response = await main.read_url(self.url)
+
+        self.assertEqual(response.provider, "direct")
+        self.assertEqual(response.content, "直接读取的正文")
+
+    async def test_jina_fast_error_waits_for_tavily(self):
+        async def slow_tavily(*_args, **_kwargs):
+            await asyncio.sleep(0.1)
+            return self._tavily_response([{"url": self.url, "raw_content": "正文"}])
+
+        self.client.post.side_effect = slow_tavily
+        self.client.get.side_effect = self._status_error(404)
+
+        with patch("main._tavily_pool", main.TavilyKeyPool(["tvly-test"])):
+            response = await main.read_url(self.url)
+
+        self.assertEqual(response.provider, "tavily")
+
+    async def test_all_providers_failing_reports_jina_error(self):
+        self.client.post.return_value = self._tavily_response([])
+        self.client.get.side_effect = self._status_error(404)
+
+        with patch("main._tavily_pool", main.TavilyKeyPool(["tvly-test"])):
             with self.assertRaises(HTTPException) as raised:
                 await main.read_url(self.url)
 
-        self.assertEqual(raised.exception.detail["kind"], "timeout")
-        self.read_direct.assert_awaited_once()
-        self.client.get.assert_not_awaited()
-
-    async def test_jina_fallback_only_gets_remaining_total_budget(self):
-        self.client.post.side_effect = httpx.ReadTimeout("超时")
-
-        with (
-            patch("main._tavily_pool", main.TavilyKeyPool(["tvly-test"])),
-            patch("main._monotonic", side_effect=[0.0, 0.0, 0.0, 0.0, 18.0, 18.0, 18.0]),
-        ):
-            with self.assertRaises(HTTPException) as raised:
-                await main.read_url(self.url)
-
-        self.assertEqual(raised.exception.status_code, 504)
-        self.assertEqual(raised.exception.detail["kind"], "timeout")
-        self.assertEqual(raised.exception.detail["attempts"], 1)
-        self.client.get.assert_not_awaited()
+        self.assertEqual(raised.exception.status_code, 502)
+        self.assertEqual(raised.exception.detail["upstream_status"], 404)
+        self.assertEqual(raised.exception.detail["attempts"], 2)
 
     def _tavily_ok(self) -> httpx.Response:
         return self._tavily_response([{"url": self.url, "raw_content": "正文"}])
@@ -620,6 +647,7 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pool_rotates_keys_across_requests(self):
         self.client.post.return_value = self._tavily_ok()
+        self.client.get.side_effect = self._hang
         pool = main.TavilyKeyPool(["k1", "k2", "k3"])
 
         with patch("main._tavily_pool", pool):
@@ -636,6 +664,7 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
                     self._status_error(status_code),
                     self._tavily_ok(),
                 ]
+                self.client.get.side_effect = self._hang
                 pool = main.TavilyKeyPool(["k1", "k2"])
 
                 with patch("main._tavily_pool", pool):
@@ -644,11 +673,11 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.provider, "tavily")
                 self.assertEqual(self._used_keys(), ["k1", "k2"])
                 self.assertEqual(pool.available_count(), 1)
-                self.client.get.assert_not_awaited()
 
     async def test_unavailable_key_is_skipped_until_cooldown_expires(self):
         pool = main.TavilyKeyPool(["k1", "k2"])
         self.client.post.side_effect = [self._status_error(429), self._tavily_ok()]
+        self.client.get.side_effect = self._hang
 
         with (
             patch("main._tavily_pool", pool),
@@ -674,6 +703,7 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_key_stays_disabled(self):
         pool = main.TavilyKeyPool(["k1", "k2"])
         self.client.post.side_effect = [self._status_error(401), self._tavily_ok()]
+        self.client.get.side_effect = self._hang
 
         with (
             patch("main._tavily_pool", pool),
@@ -741,12 +771,11 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
 
         timeout = main.httpx.AsyncClient.call_args.kwargs["timeout"]
         self.assertEqual(timeout.connect, main.JINA_CONNECT_TIMEOUT)
-        self.assertEqual(timeout.read, main.JINA_READ_TIMEOUT)
+        self.assertLessEqual(timeout.read, main.READ_TOTAL_TIMEOUT)
+        self.assertGreater(timeout.read, main.READ_TOTAL_TIMEOUT - 1)
         self.assertEqual(timeout.write, main.JINA_WRITE_TIMEOUT)
         self.assertEqual(timeout.pool, main.JINA_POOL_TIMEOUT)
-        self.assertGreaterEqual(timeout.read, 10)
-        self.assertGreaterEqual(main.JINA_MIN_RETRY_WINDOW, 10)
-        self.assertLess(main.JINA_TOTAL_TIMEOUT, 20)
+        self.assertLessEqual(main.READ_TOTAL_TIMEOUT, 10)
 
 
 
@@ -920,7 +949,7 @@ class DirectReadTests(unittest.IsolatedAsyncioTestCase):
         self._html("news.example.com", "/a")
         with patch("main._tavily_pool", main.TavilyKeyPool(["tvly-test"])), patch(
             "main._read_with_tavily", new=AsyncMock(return_value=("# 整页\n导航 正文", "整页"))
-        ) as tavily:
+        ) as tavily, patch("main._fetch_jina", side_effect=ReaderServiceTests._hang):
             response = await main.read_url("https://news.example.com/a", full=True)
 
         self.assertEqual(response.provider, "tavily")
