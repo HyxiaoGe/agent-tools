@@ -1,7 +1,7 @@
 """
 reader-service — 网页内容读取微服务
-先直接抓取 HTML 提取正文；直接抓取失败或迟迟没有结果时，同时请求 Tavily Extract
-与 Jina Reader，谁先读到用谁，整个请求受同一个总时限约束。
+先直接抓取 HTML 提取正文；直接抓取失败或迟迟没有结果时，同时请求 Tavily Extract、
+Firecrawl 与 Jina Reader，谁先读到用谁，整个请求受同一个总时限约束。
 """
 
 import asyncio
@@ -33,10 +33,10 @@ JINA_READ_TIMEOUT = max(
 )
 JINA_WRITE_TIMEOUT = float(os.getenv("JINA_WRITE_TIMEOUT", "3"))
 JINA_POOL_TIMEOUT = float(os.getenv("JINA_POOL_TIMEOUT", "2"))
-# 一次读取的总时限：直接抓取、Tavily、Jina 都在这个时限内完成，超时就放弃该网页。
+# 一次读取的总时限：直接抓取、Tavily、Firecrawl、Jina 都在这个时限内完成，超时就放弃该网页。
 # 调用方会并行读多个网页、等最慢的那个，读不到的网页要尽快放弃，免得拖住整轮。
 READ_TOTAL_TIMEOUT = float(os.getenv("READ_TOTAL_TIMEOUT", "10"))
-# 直接抓取在这段时间内没有结果（或已经失败）就同时请求 Tavily 和 Jina；直接抓取继续跑，三路谁先读到用谁。
+# 直接抓取在这段时间内没有结果（或已经失败）就同时请求 Tavily、Firecrawl 和 Jina；直接抓取继续跑，谁先读到用谁。
 DIRECT_HEDGE_DELAY = float(os.getenv("DIRECT_HEDGE_DELAY", "1.5"))
 JINA_RETRY_BACKOFF = float(os.getenv("JINA_RETRY_BACKOFF", "0.2"))
 # Jina 首次失败后剩余时间不足这么多就不再重试，重试也来不及读完。
@@ -54,6 +54,14 @@ TAVILY_TIMEOUT = float(os.getenv("TAVILY_TIMEOUT", "8"))
 # Tavily 账户级失败按 key 冷却：密钥无效一直停用到重启；额度用完隔天再试
 # （各账户计费周期不同，按天重试最省事且失败很快）；限流短暂冷却。
 TAVILY_KEY_COOLDOWNS = {401: None, 432: 86400.0, 433: 86400.0, 429: 60.0}
+FIRECRAWL_SCRAPE_URL = "https://api.firecrawl.dev/v2/scrape"
+# 按顺序使用：平时只用第一把（额度最多的主账号），限流等账户级失败时同一请求换下一把。
+# 速率按账号计，多把 key 必须来自不同账号才有用。
+FIRECRAWL_API_KEYS = [
+    key.strip() for key in os.getenv("FIRECRAWL_API_KEYS", "").split(",") if key.strip()
+]
+# 401 密钥无效停用到重启；402 额度用完隔天再试；429 每分钟次数用完，上游建议 30s 后重试。
+FIRECRAWL_KEY_COOLDOWNS = {401: None, 402: 86400.0, 429: 30.0}
 GOOGLE_FAVICON_API = "https://www.google.com/s2/favicons?sz=32&domain="
 # Jina 账户级失败（密钥失效/余额不足）：换哪个网页都读不了，需要人处理
 ACCOUNT_FAILURE_STATUSES = (401, 402, 403)
@@ -102,8 +110,16 @@ def _wall_time() -> float:
     return time.time()
 
 
-class TavilyKeyPool:
-    """轮询分发 Tavily key；账户级失败的 key 冷却后自动回池，不影响其他 key。"""
+class KeyPool:
+    """分发上游 key；账户级失败的 key 冷却后自动回池，不影响其他 key。
+
+    rotate=True 时每个请求从下一把 key 开始轮询；False 时总是按配置顺序，前面的 key 优先。
+    """
+
+    provider = ""
+    label = ""
+    cooldowns: dict[int, float | None] = {}
+    rotate = True
 
     def __init__(self, keys: list[str]):
         self._keys = list(keys)
@@ -119,7 +135,7 @@ class TavilyKeyPool:
         now = _wall_time()
         total = len(self._keys)
         ordered = [(self._next + offset) % total for offset in range(total)] if total else []
-        if total:
+        if total and self.rotate:
             self._next = (self._next + 1) % total
         available = []
         for index in ordered:
@@ -133,12 +149,13 @@ class TavilyKeyPool:
         return available
 
     def mark_unavailable(self, index: int, upstream_status: int) -> None:
-        cooldown = TAVILY_KEY_COOLDOWNS[upstream_status]
+        cooldown = self.cooldowns[upstream_status]
         until = None if cooldown is None else _wall_time() + cooldown
         self._blocked[index] = (until, upstream_status)
         logger.warning(
-            "reader_tavily_key_unavailable key_index=%s upstream_status=%s "
+            "reader_%s_key_unavailable key_index=%s upstream_status=%s "
             "available=%s total=%s",
+            self.provider,
             index + 1,
             upstream_status,
             self.available_count(),
@@ -165,7 +182,7 @@ class TavilyKeyPool:
         if not self._keys or self.available_count() > 0:
             return None
         return {
-            "message": "Tavily 号池全部 key 不可用（密钥无效、额度用完或限流）",
+            "message": f"{self.label} 号池全部 key 不可用（密钥无效、额度用完或限流）",
             "total": len(self._keys),
             "available": 0,
             "key_statuses": {
@@ -175,11 +192,25 @@ class TavilyKeyPool:
         }
 
 
+class TavilyKeyPool(KeyPool):
+    provider = "tavily"
+    label = "Tavily"
+    cooldowns = TAVILY_KEY_COOLDOWNS
+
+
+class FirecrawlKeyPool(KeyPool):
+    provider = "firecrawl"
+    label = "Firecrawl"
+    cooldowns = FIRECRAWL_KEY_COOLDOWNS
+    rotate = False
+
+
 _tavily_pool = TavilyKeyPool(TAVILY_API_KEYS)
+_firecrawl_pool = FirecrawlKeyPool(FIRECRAWL_API_KEYS)
 
 
-async def _fetch_tavily(url: str, api_key: str, timeout: float) -> dict:
-    """单次 Tavily Extract；返回该 URL 的结果，失败或无结果时返回空 dict。"""
+async def _fetch_tavily(url: str, api_key: str, timeout: float) -> tuple[str, str | None] | str:
+    """单次 Tavily Extract；读到返回 (正文, 标题)，没有正文返回失败原因。"""
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
             TAVILY_EXTRACT_URL,
@@ -189,59 +220,105 @@ async def _fetch_tavily(url: str, api_key: str, timeout: float) -> dict:
         response.raise_for_status()
         payload = response.json()
     results = payload.get("results") if isinstance(payload, dict) else None
-    if not isinstance(results, list) or not results or not isinstance(results[0], dict):
-        return {}
-    return results[0]
+    result = results[0] if isinstance(results, list) and results else None
+    if not isinstance(result, dict):
+        return "empty_content"
+    content = result.get("raw_content")
+    if not isinstance(content, str) or not content.strip():
+        return "empty_content"
+    title = result.get("title")
+    return content, title if isinstance(title, str) and title.strip() else None
 
 
-async def _read_with_tavily(url: str, domain: str) -> tuple[str, str | None] | None:
-    """Tavily 读取成功返回 (正文, 标题)；任何失败都返回 None，交给 Jina 回退。
+async def _fetch_firecrawl(
+    url: str, api_key: str, timeout: float, *, full: bool
+) -> tuple[str, str | None] | str:
+    """单次 Firecrawl scrape；原网页返回错误状态码（如 404）时不把错误页当正文。"""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(
+            FIRECRAWL_SCRAPE_URL,
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"url": url, "formats": ["markdown"], "onlyMainContent": not full},
+        )
+        response.raise_for_status()
+        payload = response.json()
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        return "empty_content"
+    metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+    page_status = metadata.get("statusCode")
+    if isinstance(page_status, int) and page_status >= 400:
+        return "page_status"
+    content = data.get("markdown")
+    if not isinstance(content, str) or not content.strip():
+        return "empty_content"
+    title = metadata.get("title")
+    return content, title if isinstance(title, str) and title.strip() else None
+
+
+async def _read_with_pool(
+    pool: KeyPool, url: str, domain: str, deadline: float, fetch
+) -> tuple[str, str | None] | None:
+    """用号池读取，成功返回 (正文, 标题)；任何失败都返回 None，由其他读取方式兜底。
 
     账户级失败（密钥无效/额度用完/限流）换下一个 key 重试，这类失败返回很快；
-    超时、5xx、无正文属于页面级失败，换 key 也无济于事，直接回退 Jina。
+    超时、5xx、无正文属于页面级失败，换 key 也无济于事，直接放弃。
     """
     started_at = _monotonic()
-    deadline = started_at + TAVILY_TIMEOUT
     reason = "no_available_key"
     upstream_status = None
-    for index, api_key in _tavily_pool.candidates():
+    for index, api_key in pool.candidates():
         remaining = deadline - _monotonic()
         if remaining <= 0:
             reason = "timeout"
             break
         try:
             result = await asyncio.wait_for(
-                _fetch_tavily(url, api_key, remaining), timeout=remaining
+                fetch(url, api_key, remaining), timeout=remaining
             )
         except (httpx.TimeoutException, asyncio.TimeoutError):
             reason = "timeout"
             break
         except httpx.HTTPStatusError as exc:
             upstream_status = exc.response.status_code
-            if upstream_status in TAVILY_KEY_COOLDOWNS:
+            if upstream_status in pool.cooldowns:
                 reason = "upstream_auth"
-                _tavily_pool.mark_unavailable(index, upstream_status)
+                pool.mark_unavailable(index, upstream_status)
                 continue
             reason = "upstream_error"
             break
         except Exception:
             reason = "request_error"
             break
-        _tavily_pool.mark_ok(index)
-        content = result.get("raw_content")
-        if isinstance(content, str) and content.strip():
-            title = result.get("title")
-            return content, title if isinstance(title, str) and title.strip() else None
-        reason = "empty_content"
+        pool.mark_ok(index)
+        if isinstance(result, tuple):
+            return result
+        reason = result
         break
     logger.warning(
-        "reader_tavily_fallback domain=%s kind=%s upstream_status=%s duration_ms=%s",
+        "reader_%s_fallback domain=%s kind=%s upstream_status=%s duration_ms=%s",
+        pool.provider,
         domain,
         reason,
         upstream_status,
         max(0, int((_monotonic() - started_at) * 1000)),
     )
     return None
+
+
+async def _read_with_tavily(url: str, domain: str) -> tuple[str, str | None] | None:
+    # 实测 Tavily 很快，用自己更短的超时，不必等满整次读取的总时限。
+    deadline = _monotonic() + TAVILY_TIMEOUT
+    return await _read_with_pool(_tavily_pool, url, domain, deadline, _fetch_tavily)
+
+
+async def _read_with_firecrawl(
+    url: str, domain: str, deadline: float, full: bool
+) -> tuple[str, str | None] | None:
+    async def fetch(target: str, api_key: str, timeout: float):
+        return await _fetch_firecrawl(target, api_key, timeout, full=full)
+
+    return await _read_with_pool(_firecrawl_pool, url, domain, deadline, fetch)
 
 
 def _extract_title(content: str, header_title: str | None) -> str | None:
@@ -314,12 +391,15 @@ def _clear_account_failure() -> None:
 @app.get("/health")
 async def health():
     tavily_failure = _tavily_pool.health_failure()
-    if _account_failure or tavily_failure:
+    firecrawl_failure = _firecrawl_pool.health_failure()
+    if _account_failure or tavily_failure or firecrawl_failure:
         content: dict = {"status": "degraded"}
         if _account_failure:
             content["jina_account"] = _account_failure
         if tavily_failure:
             content["tavily_account"] = tavily_failure
+        if firecrawl_failure:
+            content["firecrawl_account"] = firecrawl_failure
         return JSONResponse(status_code=503, content=content)
     return {"status": "ok"}
 
@@ -460,7 +540,9 @@ async def read_url(
     # 调用方需要整页时传 full=true 跳过它。
     direct_task = None if full else asyncio.create_task(read_direct(url, domain))
     tavily_task = None
-    tavily_attempts = 0
+    firecrawl_task = None
+    # 同时发出的读取方式各算一次尝试，Jina 另按自己的实际次数算。
+    provider_attempts = 0
     jina = _JinaOutcome()
     pending = {direct_task} if direct_task is not None else set()
     try:
@@ -473,8 +555,14 @@ async def read_url(
 
         if _tavily_pool:
             tavily_task = asyncio.create_task(_read_with_tavily(url, domain))
-            tavily_attempts = 1
+            provider_attempts += 1
             pending.add(tavily_task)
+        if _firecrawl_pool:
+            firecrawl_task = asyncio.create_task(
+                _read_with_firecrawl(url, domain, deadline, full)
+            )
+            provider_attempts += 1
+            pending.add(firecrawl_task)
         jina_task = asyncio.create_task(_read_with_jina(url, deadline, jina))
         pending.add(jina_task)
 
@@ -488,7 +576,9 @@ async def read_url(
             if direct_task in done and (page := direct_task.result()) is not None:
                 return respond(page.content, page.title, "direct", 1)
             if tavily_task in done and (extracted := tavily_task.result()) is not None:
-                return respond(extracted[0], extracted[1], "tavily", tavily_attempts)
+                return respond(extracted[0], extracted[1], "tavily", provider_attempts)
+            if firecrawl_task in done and (scraped := firecrawl_task.result()) is not None:
+                return respond(scraped[0], scraped[1], "firecrawl", provider_attempts)
             if jina_task in done:
                 jina_task.result()
                 if jina.response is not None:
@@ -497,7 +587,7 @@ async def read_url(
                         jina.response.text,
                         jina.response.headers.get("x-title"),
                         "jina",
-                        jina.attempts + tavily_attempts,
+                        jina.attempts + provider_attempts,
                     )
     finally:
         await _cancel(pending)
@@ -508,7 +598,7 @@ async def read_url(
         message=jina.error_message,
         retryable=jina.error_retryable,
         upstream_status=jina.upstream_status,
-        attempts=jina.attempts + tavily_attempts,
+        attempts=jina.attempts + provider_attempts,
         started_at=start,
     )
     _raise_reader_error(status_code=jina.error_status, domain=domain, detail=detail)

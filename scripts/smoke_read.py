@@ -118,7 +118,7 @@ def run_smoke() -> tuple[int, str]:
             upstream_status=None,
         )
     provider = payload.get("provider")
-    return attempts, provider if provider in ("tavily", "jina") else "unknown"
+    return attempts, provider if provider in ("direct", "tavily", "firecrawl", "jina") else "unknown"
 
 
 def main() -> int:
