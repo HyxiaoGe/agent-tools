@@ -24,7 +24,12 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 JINA_BASE_URL = "https://r.jina.ai"
-JINA_API_KEY = os.getenv("JINA_API_KEY", "")
+# 号池：逗号分隔的多个 key，轮询使用；兼容单 key 的 JINA_API_KEY。余额按账号算，多个 key 必须来自不同账号。
+JINA_API_KEYS = [
+    key.strip()
+    for key in os.getenv("JINA_API_KEYS", os.getenv("JINA_API_KEY", "")).split(",")
+    if key.strip()
+]
 JINA_CONNECT_TIMEOUT = float(os.getenv("JINA_CONNECT_TIMEOUT", "3"))
 JINA_MIN_READ_TIMEOUT = 10.0
 JINA_READ_TIMEOUT = max(
@@ -63,12 +68,8 @@ FIRECRAWL_API_KEYS = [
 # 401 密钥无效停用到重启；402 额度用完隔天再试；429 每分钟次数用完，上游建议 30s 后重试。
 FIRECRAWL_KEY_COOLDOWNS = {401: None, 402: 86400.0, 429: 30.0}
 GOOGLE_FAVICON_API = "https://www.google.com/s2/favicons?sz=32&domain="
-# Jina 账户级失败（密钥失效/余额不足）：换哪个网页都读不了，需要人处理
-ACCOUNT_FAILURE_STATUSES = (401, 402, 403)
-
-# 最近一次读取暴露的账户级故障；/health 据此报 503 让哨兵告警，下次读取成功即清除。
-# 只在真实读取时更新，健康检查本身不调用 Jina、不消耗额度。
-_account_failure: dict | None = None
+# Jina 账户级失败按 key 冷却：401 停用到重启；402 余额不足隔天再试；403 无权限 1 小时后再试；429 限流 60s。
+JINA_KEY_COOLDOWNS = {401: None, 402: 86400.0, 403: 3600.0, 429: 60.0}
 
 
 class ReadResponse(BaseModel):
@@ -205,7 +206,14 @@ class FirecrawlKeyPool(KeyPool):
     rotate = False
 
 
+class JinaKeyPool(KeyPool):
+    provider = "jina"
+    label = "Jina"
+    cooldowns = JINA_KEY_COOLDOWNS
+
+
 _tavily_pool = TavilyKeyPool(TAVILY_API_KEYS)
+_jina_pool = JinaKeyPool(JINA_API_KEYS)
 _firecrawl_pool = FirecrawlKeyPool(FIRECRAWL_API_KEYS)
 
 
@@ -371,31 +379,16 @@ def _raise_reader_error(*, status_code: int, domain: str, detail: dict) -> None:
     raise HTTPException(status_code=status_code, detail=detail) from None
 
 
-def _set_account_failure(upstream_status: int | None, message: str) -> None:
-    global _account_failure
-    if upstream_status in ACCOUNT_FAILURE_STATUSES:
-        _account_failure = {
-            "upstream_status": upstream_status,
-            "message": message,
-            "since": _account_failure["since"]
-            if _account_failure
-            else time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        }
-
-
-def _clear_account_failure() -> None:
-    global _account_failure
-    _account_failure = None
-
-
 @app.get("/health")
 async def health():
+    # 只看号池状态，健康检查本身不调用上游、不消耗额度。
+    jina_failure = _jina_pool.health_failure()
     tavily_failure = _tavily_pool.health_failure()
     firecrawl_failure = _firecrawl_pool.health_failure()
-    if _account_failure or tavily_failure or firecrawl_failure:
+    if jina_failure or tavily_failure or firecrawl_failure:
         content: dict = {"status": "degraded"}
-        if _account_failure:
-            content["jina_account"] = _account_failure
+        if jina_failure:
+            content["jina_account"] = jina_failure
         if tavily_failure:
             content["tavily_account"] = tavily_failure
         if firecrawl_failure:
@@ -418,17 +411,36 @@ class _JinaOutcome:
 
 
 async def _read_with_jina(url: str, deadline: float, outcome: _JinaOutcome) -> None:
-    """读取成功时写入 outcome.response；失败时写入错误信息，可重试的错误在时限内重试一次。"""
-    jina_url = f"{JINA_BASE_URL}/{url}"
-    headers = {"Accept": "text/markdown"}
-    if JINA_API_KEY:
-        headers["Authorization"] = f"Bearer {JINA_API_KEY}"
+    """读取成功时写入 outcome.response；失败时写入错误信息，可重试的错误在时限内重试一次。
 
-    while outcome.attempts < JINA_MAX_ATTEMPTS:
+    配置了号池时，账户级失败（密钥无效/余额不足/限流）冷却这把 key，同一请求马上换下一把，
+    不算页面重试；没配 key 时匿名请求。
+    """
+    jina_url = f"{JINA_BASE_URL}/{url}"
+    keys: list[tuple[int | None, str | None]] = (
+        _jina_pool.candidates() if _jina_pool else [(None, None)]
+    )
+    if not keys:
+        outcome.error_status = 502
+        outcome.error_kind = "upstream_auth"
+        outcome.error_message = "Jina 号池全部 key 不可用"
+        outcome.error_retryable = False
+        outcome.upstream_status = None
+        logger.warning("reader_jina_no_available_key total=%s", len(JINA_API_KEYS))
+        return
+    key_position = 0
+    page_attempts = 0
+
+    while page_attempts < JINA_MAX_ATTEMPTS:
         remaining = deadline - _monotonic()
         if remaining <= 0:
             return
+        key_index, api_key = keys[key_position]
+        headers = {"Accept": "text/markdown"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         outcome.attempts += 1
+        page_attempts += 1
         try:
             resp = await asyncio.wait_for(
                 _fetch_jina(jina_url, headers, _timeout_for(remaining)),
@@ -437,6 +449,8 @@ async def _read_with_jina(url: str, deadline: float, outcome: _JinaOutcome) -> N
             if _monotonic() > deadline:
                 raise asyncio.TimeoutError
             outcome.response = resp
+            if key_index is not None:
+                _jina_pool.mark_ok(key_index)
             return
         except (httpx.TimeoutException, asyncio.TimeoutError):
             outcome.error_status = 504
@@ -448,6 +462,8 @@ async def _read_with_jina(url: str, deadline: float, outcome: _JinaOutcome) -> N
             upstream_status = exc.response.status_code
             outcome.upstream_status = upstream_status
             outcome.error_status = 502
+            if key_index is not None and upstream_status in JINA_KEY_COOLDOWNS:
+                _jina_pool.mark_unavailable(key_index, upstream_status)
             if upstream_status in (401, 403):
                 outcome.error_kind = "upstream_auth"
                 outcome.error_message = "Jina Reader 上游鉴权失败"
@@ -478,13 +494,20 @@ async def _read_with_jina(url: str, deadline: float, outcome: _JinaOutcome) -> N
             outcome.error_retryable = False
             outcome.upstream_status = None
 
+        if key_index is not None and outcome.upstream_status in JINA_KEY_COOLDOWNS:
+            # 这把 key 已冷却：有下一把就立即换，不等退避、不占页面重试次数。
+            if key_position + 1 < len(keys):
+                key_position += 1
+                page_attempts -= 1
+                continue
+            return
+
         remaining = deadline - _monotonic()
         if not (
             outcome.error_retryable
-            and outcome.attempts < JINA_MAX_ATTEMPTS
+            and page_attempts < JINA_MAX_ATTEMPTS
             and remaining - JINA_RETRY_BACKOFF >= JINA_MIN_RETRY_WINDOW
         ):
-            _set_account_failure(outcome.upstream_status, outcome.error_message)
             return
         await asyncio.sleep(JINA_RETRY_BACKOFF)
 
@@ -582,7 +605,6 @@ async def read_url(
             if jina_task in done:
                 jina_task.result()
                 if jina.response is not None:
-                    _clear_account_failure()
                     return respond(
                         jina.response.text,
                         jina.response.headers.get("x-title"),

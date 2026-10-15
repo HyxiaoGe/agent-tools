@@ -24,8 +24,9 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.client_patch = patch("main.httpx.AsyncClient", return_value=self.client)
         self.client_patch.start()
         self.addCleanup(self.client_patch.stop)
-        main._account_failure = None
-        self.addCleanup(setattr, main, "_account_failure", None)
+        jina_pool_patch = patch("main._jina_pool", main.JinaKeyPool([]))
+        jina_pool_patch.start()
+        self.addCleanup(jina_pool_patch.stop)
         tavily_pool_patch = patch("main._tavily_pool", main.TavilyKeyPool([]))
         tavily_pool_patch.start()
         self.addCleanup(tavily_pool_patch.stop)
@@ -92,27 +93,100 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(raised.exception.detail["attempts"], 1)
                 self.assertEqual(self.client.get.await_count, 1)
 
-    async def test_account_failure_turns_health_degraded_until_next_success(self):
+    def _jina_keys_used(self) -> list[str | None]:
+        return [
+            call.kwargs["headers"].get("Authorization", "").removeprefix("Bearer ") or None
+            for call in self.client.get.await_args_list
+        ]
+
+    async def test_without_jina_keys_requests_anonymously(self):
+        self.client.get.return_value = self._jina_success()
+
+        response = await main.read_url(self.url)
+
+        self.assertEqual(response.provider, "jina")
+        self.assertEqual(self._jina_keys_used(), [None])
+
+    async def test_jina_pool_rotates_keys_across_requests(self):
+        self.client.get.return_value = self._jina_success()
+        with patch("main._jina_pool", main.JinaKeyPool(["j1", "j2", "j3"])):
+            for _ in range(4):
+                await main.read_url(self.url)
+
+        self.assertEqual(self._jina_keys_used(), ["j1", "j2", "j3", "j1"])
+
+    async def test_jina_account_failure_switches_key_without_backoff(self):
+        for status_code in (401, 402, 403, 429):
+            with self.subTest(status_code=status_code):
+                self.client.get.reset_mock()
+                self.client.get.side_effect = [
+                    self._status_error(status_code),
+                    self._jina_success(),
+                ]
+                pool = main.JinaKeyPool(["j1", "j2"])
+
+                with (
+                    patch("main._jina_pool", pool),
+                    patch("main.asyncio.sleep", new=AsyncMock()) as sleep,
+                ):
+                    response = await main.read_url(self.url)
+
+                self.assertEqual(response.provider, "jina")
+                self.assertEqual(response.attempts, 2)
+                self.assertEqual(self._jina_keys_used(), ["j1", "j2"])
+                self.assertEqual(pool.available_count(), 1)
+                sleep.assert_not_awaited()
+
+    async def test_jina_page_failure_retries_without_burning_key(self):
+        self.client.get.side_effect = [self._status_error(503), self._jina_success()]
+        pool = main.JinaKeyPool(["j1", "j2"])
+
+        with (
+            patch("main._jina_pool", pool),
+            patch("main.asyncio.sleep", new=AsyncMock()),
+        ):
+            response = await main.read_url(self.url)
+
+        self.assertEqual(response.provider, "jina")
+        self.assertEqual(self._jina_keys_used(), ["j1", "j1"])
+        self.assertEqual(pool.available_count(), 2)
+
+    async def test_all_jina_keys_unavailable_degrades_health_until_cooldown(self):
         self.assertEqual(await main.health(), {"status": "ok"})
-        self.client.get.side_effect = self._status_error(402)
+        pool = main.JinaKeyPool(["j1", "j2"])
+        self.client.get.side_effect = [self._status_error(402), self._status_error(402)]
 
-        with self.assertRaises(HTTPException):
-            await main.read_url(self.url)
+        with (
+            patch("main._jina_pool", pool),
+            patch("main._wall_time", return_value=1000.0),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await main.read_url(self.url)
+            self.assertEqual(raised.exception.detail["upstream_status"], 402)
+            self.assertEqual(raised.exception.detail["message"], "Jina Reader 账户余额不足")
 
-        degraded = await main.health()
-        self.assertEqual(degraded.status_code, 503)
-        body = json.loads(degraded.body)
-        self.assertEqual(body["jina_account"]["upstream_status"], 402)
-        self.assertEqual(body["jina_account"]["message"], "Jina Reader 账户余额不足")
-        self.assertNotIn("secret", degraded.body.decode())
+            degraded = await main.health()
+            self.assertEqual(degraded.status_code, 503)
+            body = json.loads(degraded.body)
+            self.assertEqual(body["jina_account"]["key_statuses"], {"1": 402, "2": 402})
+            self.assertIn("Jina", body["jina_account"]["message"])
+            self.assertNotIn("j1", degraded.body.decode())
 
-        request = httpx.Request("GET", "https://r.jina.ai/https://example.com")
+            self.client.get.reset_mock()
+            with self.assertRaises(HTTPException) as raised:
+                await main.read_url(self.url)
+            self.assertEqual(raised.exception.detail["message"], "Jina 号池全部 key 不可用")
+            self.client.get.assert_not_awaited()
+
         self.client.get.side_effect = None
-        self.client.get.return_value = httpx.Response(
-            200, request=request, text="Title: ok\n\nbody"
-        )
-        await main.read_url(self.url)
-        self.assertEqual(await main.health(), {"status": "ok"})
+        self.client.get.return_value = self._jina_success()
+        with (
+            patch("main._jina_pool", pool),
+            patch("main._wall_time", return_value=1000.0 + 86401),
+        ):
+            self.assertEqual(await main.health(), {"status": "ok"})
+            response = await main.read_url(self.url)
+        self.assertEqual(response.provider, "jina")
 
     async def test_page_level_failures_do_not_degrade_health(self):
         for status_code in (400, 404, 429, 500):
@@ -440,6 +514,58 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("COPY scripts/ scripts/", dockerfile)
         self.assertIn("-e TAVILY_API_KEYS=${{ secrets.TAVILY_API_KEYS }}", workflow)
         self.assertIn("-e FIRECRAWL_API_KEYS=${{ secrets.FIRECRAWL_API_KEYS }}", workflow)
+        self.assertIn("-e JINA_API_KEYS=${{ secrets.JINA_API_KEYS }}", workflow)
+
+    def test_jina_key_check_script_never_prints_keys(self):
+        script_path = Path(__file__).with_name("scripts") / "check_jina_keys.py"
+        spec = importlib.util.spec_from_file_location("check_jina_keys", script_path)
+        check = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(check)
+        request = httpx.Request("GET", check.JINA_BALANCE_URL)
+        responses = {
+            "jina_good": httpx.Response(
+                200,
+                json={"user_id": "u1", "wallet": {"total_balance": 9999971}},
+                request=request,
+            ),
+            "jina_empty": httpx.Response(
+                200, json={"user_id": "u2", "wallet": {"total_balance": 0}}, request=request
+            ),
+            "jina_bad": httpx.Response(401, request=request),
+        }
+
+        class FakeClient:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def get(self, _url, params):
+                return responses[params["api_key"]]
+
+        stdout = io.StringIO()
+        with (
+            patch.dict(
+                "os.environ",
+                {"JINA_API_KEYS": "jina_good, jina_empty,jina_bad,jina_good"},
+            ),
+            patch.object(check.httpx, "Client", FakeClient),
+            redirect_stdout(stdout),
+        ):
+            exit_code = check.main()
+
+        output = stdout.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("key#1 ok balance=9999971 account=", output)
+        self.assertIn("key#2 exhausted", output)
+        self.assertIn("key#3 http_status=401", output)
+        self.assertIn("key#4 duplicate", output)
+        self.assertIn("usable=1/4", output)
+        self.assertNotIn("jina_", output)
 
     def test_firecrawl_key_check_script_never_prints_keys(self):
         script_path = Path(__file__).with_name("scripts") / "check_firecrawl_keys.py"

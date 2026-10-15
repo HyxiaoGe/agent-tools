@@ -32,6 +32,7 @@ jobs:
             --network middleware_default \
             -p 8091:8091 \
             -e JINA_API_KEY=${{ secrets.JINA_API_KEY }} \
+            -e JINA_API_KEYS=${{ secrets.JINA_API_KEYS }} \
             -e TAVILY_API_KEYS=${{ secrets.TAVILY_API_KEYS }} \
             -e FIRECRAWL_API_KEYS=${{ secrets.FIRECRAWL_API_KEYS }} \
             reader-service
