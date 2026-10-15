@@ -12,7 +12,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
+          # 不用 Actions 缓存：self-hosted 机器本地已有 pip 缓存，从 GitHub 下 428MB 缓存反而要十几分钟
       - name: Install test dependencies
         run: python -m pip install -r requirements.txt
       - name: Run unit tests
