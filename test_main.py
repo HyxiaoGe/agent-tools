@@ -957,7 +957,7 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
             request=request,
         )
 
-    async def test_firecrawl_success_wins_while_jina_still_reading(self):
+    async def test_firecrawl_success_skips_jina(self):
         self.client.post.return_value = self._firecrawl_response(title="Firecrawl 标题")
         self.client.get.side_effect = self._hang
 
@@ -966,6 +966,7 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.provider, "firecrawl")
         self.assertEqual(response.title, "Firecrawl 标题")
+        self.client.get.assert_not_awaited()
         self.assertEqual(response.content, "# 页面标题\n正文")
         call = self.client.post.await_args
         self.assertEqual(call.args[0], main.FIRECRAWL_SCRAPE_URL)
@@ -984,20 +985,86 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.provider, "firecrawl")
         self.assertFalse(self.client.post.await_args.kwargs["json"]["onlyMainContent"])
 
-    async def test_firecrawl_error_page_is_not_used_as_content(self):
-        self.client.post.return_value = self._firecrawl_response("找不到页面", 404)
+    @staticmethod
+    def _jina_error_page(status: int) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                "Title: 404 Not Found\n\nURL Source: https://example.com/a\n\n"
+                f"Warning: Target URL returned error {status}: Not Found\n\n"
+                "Markdown Content:\n页面不存在"
+            ),
+            request=httpx.Request("GET", "https://r.jina.ai/https://example.com/a"),
+        )
+
+    async def test_firecrawl_page_gone_ends_read_without_jina(self):
+        for page_status in (404, 410):
+            with self.subTest(page_status=page_status):
+                self.client.get.reset_mock()
+                self.client.post.return_value = self._firecrawl_response("找不到页面", page_status)
+                self.client.get.return_value = self._jina_success()
+
+                with (
+                    patch("main._firecrawl_pool", main.FirecrawlKeyPool(["fc-test"])),
+                    self.assertLogs("reader_service", level=logging.WARNING) as logs,
+                    self.assertRaises(HTTPException) as raised,
+                ):
+                    await main.read_url(self.url)
+
+                self.assertEqual(raised.exception.status_code, 404)
+                detail = raised.exception.detail
+                self.assertEqual(detail["kind"], "page_not_found")
+                self.assertEqual(detail["upstream_status"], page_status)
+                self.assertFalse(detail["retryable"])
+                self.client.get.assert_not_awaited()
+                self.assertIn(
+                    f"reader_firecrawl_page_error domain=example.com page_status={page_status}",
+                    "\n".join(logs.output),
+                )
+
+    async def test_firecrawl_other_error_page_falls_back_to_jina(self):
+        self.client.post.return_value = self._firecrawl_response("禁止访问", 403)
         self.client.get.return_value = self._jina_success()
 
-        with (
-            patch("main._firecrawl_pool", main.FirecrawlKeyPool(["fc-test"])),
-            self.assertLogs("reader_service", level=logging.WARNING) as logs,
-        ):
+        with patch("main._firecrawl_pool", main.FirecrawlKeyPool(["fc-test"])):
             response = await main.read_url(self.url)
 
         self.assertEqual(response.provider, "jina")
-        joined = "\n".join(logs.output)
-        self.assertIn("reader_firecrawl_fallback", joined)
-        self.assertIn("kind=page_status", joined)
+        self.assertEqual(response.attempts, 2)
+
+    async def test_jina_error_page_is_not_used_as_content(self):
+        self.client.post.return_value = self._firecrawl_response("禁止访问", 403)
+        self.client.get.return_value = self._jina_error_page(403)
+
+        with (
+            patch("main._firecrawl_pool", main.FirecrawlKeyPool(["fc-test"])),
+            self.assertRaises(HTTPException) as raised,
+        ):
+            await main.read_url(self.url)
+
+        self.assertEqual(raised.exception.status_code, 502)
+        self.assertEqual(raised.exception.detail["kind"], "page_error")
+        self.assertEqual(raised.exception.detail["upstream_status"], 403)
+        self.assertEqual(self.client.get.await_count, 1)
+
+    async def test_jina_page_gone_reports_not_found(self):
+        self.client.get.return_value = self._jina_error_page(404)
+
+        with self.assertRaises(HTTPException) as raised:
+            await main.read_url(self.url)
+
+        self.assertEqual(raised.exception.status_code, 404)
+        self.assertEqual(raised.exception.detail["kind"], "page_not_found")
+        self.assertEqual(raised.exception.detail["upstream_status"], 404)
+
+    def test_jina_page_status_only_reads_header(self):
+        self.assertEqual(main._jina_page_status(self._jina_error_page(404).text), 404)
+        self.assertIsNone(
+            main._jina_page_status(
+                "Title: t\n\nMarkdown Content:\nWarning: Target URL returned error 404: x"
+            )
+        )
+        self.assertIsNone(main._jina_page_status("# 正文\n没有头部"))
 
     async def test_tavily_and_firecrawl_race_together(self):
         async def slow_tavily(*_args, **_kwargs):

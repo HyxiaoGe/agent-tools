@@ -41,12 +41,15 @@ JINA_POOL_TIMEOUT = float(os.getenv("JINA_POOL_TIMEOUT", "2"))
 # 一次读取的总时限：直接抓取、Tavily、Firecrawl、Jina 都在这个时限内完成，超时就放弃该网页。
 # 调用方会并行读多个网页、等最慢的那个，读不到的网页要尽快放弃，免得拖住整轮。
 READ_TOTAL_TIMEOUT = float(os.getenv("READ_TOTAL_TIMEOUT", "10"))
-# 直接抓取在这段时间内没有结果（或已经失败）就同时请求 Tavily、Firecrawl 和 Jina；直接抓取继续跑，谁先读到用谁。
+# 直接抓取在这段时间内没有结果（或已经失败）就同时请求 Firecrawl 和 Tavily；直接抓取继续跑，谁先读到用谁。
+# Jina 只在 Firecrawl 失败（或没配 Firecrawl）后兜底。
 DIRECT_HEDGE_DELAY = float(os.getenv("DIRECT_HEDGE_DELAY", "1.5"))
 JINA_RETRY_BACKOFF = float(os.getenv("JINA_RETRY_BACKOFF", "0.2"))
 # Jina 首次失败后剩余时间不足这么多就不再重试，重试也来不及读完。
 JINA_MIN_RETRY_WINDOW = float(os.getenv("JINA_MIN_RETRY_WINDOW", "4"))
 JINA_MAX_ATTEMPTS = 2
+# 原网页返回这些状态码即确定不存在，不再换其他方式读；403 等可能只是拦截了某一家，继续交给 Jina 试。
+PAGE_GONE_STATUSES = (404, 410)
 TAVILY_EXTRACT_URL = "https://api.tavily.com/extract"
 # 号池：逗号分隔的多个 key，轮询使用；兼容单 key 的 TAVILY_API_KEY
 TAVILY_API_KEYS = [
@@ -109,6 +112,31 @@ async def _fetch_jina(
 
 def _wall_time() -> float:
     return time.time()
+
+
+class PageError:
+    """原网页返回错误状态码（如 404）：错误页不当正文。"""
+
+    def __init__(self, status: int):
+        self.status = status
+
+    @property
+    def gone(self) -> bool:
+        return self.status in PAGE_GONE_STATUSES
+
+
+def _jina_page_status(content: str) -> int | None:
+    """Jina 在正文前的头部用 "Warning: Target URL returned error 404: ..." 标出原网页的错误状态码。"""
+    for line in content[:2000].splitlines():
+        stripped = line.strip()
+        if stripped == "Markdown Content:":
+            return None
+        prefix = "Warning: Target URL returned error "
+        if stripped.startswith(prefix):
+            code = stripped[len(prefix) :].split(":", 1)[0].strip()
+            if code.isdigit() and int(code) >= 400:
+                return int(code)
+    return None
 
 
 class KeyPool:
@@ -240,7 +268,7 @@ async def _fetch_tavily(url: str, api_key: str, timeout: float) -> tuple[str, st
 
 async def _fetch_firecrawl(
     url: str, api_key: str, timeout: float, *, full: bool
-) -> tuple[str, str | None] | str:
+) -> tuple[str, str | None] | PageError | str:
     """单次 Firecrawl scrape；原网页返回错误状态码（如 404）时不把错误页当正文。"""
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
@@ -256,7 +284,7 @@ async def _fetch_firecrawl(
     metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
     page_status = metadata.get("statusCode")
     if isinstance(page_status, int) and page_status >= 400:
-        return "page_status"
+        return PageError(page_status)
     content = data.get("markdown")
     if not isinstance(content, str) or not content.strip():
         return "empty_content"
@@ -266,8 +294,9 @@ async def _fetch_firecrawl(
 
 async def _read_with_pool(
     pool: KeyPool, url: str, domain: str, deadline: float, fetch
-) -> tuple[str, str | None] | None:
-    """用号池读取，成功返回 (正文, 标题)；任何失败都返回 None，由其他读取方式兜底。
+) -> tuple[str, str | None] | PageError | None:
+    """用号池读取，成功返回 (正文, 标题)；原网页返回错误状态码时返回 PageError；
+    其他失败返回 None，由其他读取方式兜底。
 
     账户级失败（密钥无效/额度用完/限流）换下一个 key 重试，这类失败返回很快；
     超时、5xx、无正文属于页面级失败，换 key 也无济于事，直接放弃。
@@ -301,6 +330,15 @@ async def _read_with_pool(
         pool.mark_ok(index)
         if isinstance(result, tuple):
             return result
+        if isinstance(result, PageError):
+            logger.warning(
+                "reader_%s_page_error domain=%s page_status=%s duration_ms=%s",
+                pool.provider,
+                domain,
+                result.status,
+                max(0, int((_monotonic() - started_at) * 1000)),
+            )
+            return result
         reason = result
         break
     logger.warning(
@@ -322,7 +360,7 @@ async def _read_with_tavily(url: str, domain: str) -> tuple[str, str | None] | N
 
 async def _read_with_firecrawl(
     url: str, domain: str, deadline: float, full: bool
-) -> tuple[str, str | None] | None:
+) -> tuple[str, str | None] | PageError | None:
     async def fetch(target: str, api_key: str, timeout: float):
         return await _fetch_firecrawl(target, api_key, timeout, full=full)
 
@@ -408,6 +446,8 @@ class _JinaOutcome:
         self.error_message = "Jina Reader 请求超时"
         self.error_retryable = True
         self.upstream_status: int | None = None
+        # 原网页返回的错误状态码（Jina 把错误页包装成 200 返回）
+        self.page_status: int | None = None
 
 
 async def _read_with_jina(url: str, deadline: float, outcome: _JinaOutcome) -> None:
@@ -448,9 +488,18 @@ async def _read_with_jina(url: str, deadline: float, outcome: _JinaOutcome) -> N
             )
             if _monotonic() > deadline:
                 raise asyncio.TimeoutError
-            outcome.response = resp
             if key_index is not None:
                 _jina_pool.mark_ok(key_index)
+            page_status = _jina_page_status(resp.text)
+            if page_status is not None:
+                outcome.page_status = page_status
+                outcome.error_status = 502
+                outcome.error_kind = "page_error"
+                outcome.error_message = f"原网页返回 HTTP {page_status}，未取得正文"
+                outcome.error_retryable = False
+                outcome.upstream_status = page_status
+                return
+            outcome.response = resp
             return
         except (httpx.TimeoutException, asyncio.TimeoutError):
             outcome.error_status = 504
@@ -567,6 +616,7 @@ async def read_url(
     # 同时发出的读取方式各算一次尝试，Jina 另按自己的实际次数算。
     provider_attempts = 0
     jina = _JinaOutcome()
+    page_gone: int | None = None
     pending = {direct_task} if direct_task is not None else set()
     try:
         if direct_task is not None:
@@ -576,18 +626,21 @@ async def read_url(
                 if (page := direct_task.result()) is not None:
                     return respond(page.content, page.title, "direct", 1)
 
-        if _tavily_pool:
-            tavily_task = asyncio.create_task(_read_with_tavily(url, domain))
-            provider_attempts += 1
-            pending.add(tavily_task)
         if _firecrawl_pool:
             firecrawl_task = asyncio.create_task(
                 _read_with_firecrawl(url, domain, deadline, full)
             )
             provider_attempts += 1
             pending.add(firecrawl_task)
-        jina_task = asyncio.create_task(_read_with_jina(url, deadline, jina))
-        pending.add(jina_task)
+        if _tavily_pool:
+            tavily_task = asyncio.create_task(_read_with_tavily(url, domain))
+            provider_attempts += 1
+            pending.add(tavily_task)
+        # Jina 慢且不区分错误页，只在 Firecrawl 失败后兜底；没配 Firecrawl 时直接上。
+        jina_task = None
+        if firecrawl_task is None:
+            jina_task = asyncio.create_task(_read_with_jina(url, deadline, jina))
+            pending.add(jina_task)
 
         while pending:
             remaining = deadline - _monotonic()
@@ -600,9 +653,16 @@ async def read_url(
                 return respond(page.content, page.title, "direct", 1)
             if tavily_task in done and (extracted := tavily_task.result()) is not None:
                 return respond(extracted[0], extracted[1], "tavily", provider_attempts)
-            if firecrawl_task in done and (scraped := firecrawl_task.result()) is not None:
-                return respond(scraped[0], scraped[1], "firecrawl", provider_attempts)
-            if jina_task in done:
+            if firecrawl_task in done:
+                scraped = firecrawl_task.result()
+                if isinstance(scraped, tuple):
+                    return respond(scraped[0], scraped[1], "firecrawl", provider_attempts)
+                if isinstance(scraped, PageError) and scraped.gone:
+                    page_gone = scraped.status
+                    break
+                jina_task = asyncio.create_task(_read_with_jina(url, deadline, jina))
+                pending.add(jina_task)
+            if jina_task is not None and jina_task in done:
                 jina_task.result()
                 if jina.response is not None:
                     return respond(
@@ -611,10 +671,24 @@ async def read_url(
                         "jina",
                         jina.attempts + provider_attempts,
                     )
+                if jina.page_status in PAGE_GONE_STATUSES:
+                    page_gone = jina.page_status
+                    break
     finally:
         await _cancel(pending)
 
-    # 都没读到：Jina 已结束就报它的错误，仍在读则按超时处理。
+    if page_gone is not None:
+        detail = _error_detail(
+            kind="page_not_found",
+            message=f"网页不存在（原网页返回 HTTP {page_gone}）",
+            retryable=False,
+            upstream_status=page_gone,
+            attempts=jina.attempts + provider_attempts,
+            started_at=start,
+        )
+        _raise_reader_error(status_code=404, domain=domain, detail=detail)
+
+    # 都没读到：Jina 已结束就报它的错误；还在读或没轮到它则按超时处理。
     detail = _error_detail(
         kind=jina.error_kind,
         message=jina.error_message,
