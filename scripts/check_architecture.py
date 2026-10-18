@@ -30,7 +30,12 @@ RULES: list[dict] = [
     {
         "name": "routes must not import provider classes directly",
         "files": "app/routes/**/*.py",
-        "forbidden": ["app.providers.brave", "app.providers.tavily", "app.providers.firecrawl"],
+        "forbidden": [
+            "app.providers.brave",
+            "app.providers.tavily",
+            "app.providers.firecrawl",
+            "app.providers.deepseek",
+        ],
     },
     {
         "name": "providers must not cross-import",
@@ -46,6 +51,11 @@ RULES: list[dict] = [
         "name": "providers must not cross-import",
         "files": "app/providers/firecrawl.py",
         "forbidden": ["app.providers.brave", "app.providers.tavily"],
+    },
+    {
+        "name": "providers must not cross-import",
+        "files": "app/providers/deepseek.py",
+        "forbidden": ["app.providers.brave", "app.providers.tavily", "app.providers.firecrawl"],
     },
 ]
 

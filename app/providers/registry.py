@@ -9,6 +9,7 @@ from app.logger import get_logger
 from app.models import ProviderHistoricalUsageResponse, ProviderUsageResponse
 from app.providers.base import SearchProvider
 from app.providers.brave import BraveProvider
+from app.providers.deepseek import DeepSeekProvider
 from app.providers.firecrawl import FirecrawlProvider, FirecrawlUsageClient, FirecrawlUsageError
 from app.providers.tavily import TavilyProvider
 from app.usage import get_recorded_provider_usage
@@ -33,6 +34,8 @@ def _init_providers() -> None:
         _providers["tavily"] = TavilyProvider()
     if settings.FIRECRAWL_API_KEY:
         _providers["firecrawl"] = FirecrawlProvider()
+    if settings.DEEPSEEK_API_KEY:
+        _providers["deepseek"] = DeepSeekProvider()
 
 
 def get_provider(name: str | None = None) -> SearchProvider:

@@ -18,7 +18,7 @@ Search Service is a FastAPI middleware that provides a unified search API over m
 
 ### 3. Providers (`app/providers/`)
 - `base.py` -- `SearchProvider` Protocol defining the contract
-- `brave.py` / `tavily.py` / `firecrawl.py` -- concrete implementations using httpx
+- `brave.py` / `tavily.py` / `firecrawl.py` / `deepseek.py` -- concrete implementations using httpx
 - `registry.py` -- lazy init, lookup by name, fallback selection
 - Each provider parses its own API response into `SearchResultItem`
 
