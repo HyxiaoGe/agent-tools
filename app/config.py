@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     TAVILY_API_KEY: str = ""
     FIRECRAWL_API_KEY: str = ""
     FIRECRAWL_API_URL: str = "https://api.firecrawl.dev"
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_API_URL: str = "https://api.deepseek.com"
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379"

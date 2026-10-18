@@ -17,6 +17,8 @@ app/
     registry.py    -- provider init, get/fallback/list
     brave.py       -- Brave Search API
     tavily.py      -- Tavily Search API
+    firecrawl.py   -- Firecrawl Search API
+    deepseek.py    -- DeepSeek Search API
   routes/
     search.py      -- POST /search (with fallback + cache logic)
     admin.py       -- GET /health, GET /providers, DELETE /cache

@@ -6,7 +6,7 @@
 
 ## 特性
 
-- **Provider 无关**：通过配置切换搜索后端（Brave、Tavily、Firecrawl、SearXNG），无需改代码
+- **Provider 无关**：通过配置切换搜索后端（Brave、Tavily、Firecrawl、DeepSeek、SearXNG），无需改代码
 - **多类型搜索**：Web、News、Image
 - **MCP Server**：Claude Code 和 AI Agent 可直接调用搜索工具
 - **Redis 缓存**：基于 TTL 的查询去重缓存
@@ -94,6 +94,8 @@ Claude Code 集成配置：
 | `TAVILY_API_KEY` | — | Tavily Search API 密钥 |
 | `FIRECRAWL_API_KEY` | — | Firecrawl API 密钥 |
 | `FIRECRAWL_API_URL` | `https://api.firecrawl.dev` | Firecrawl API 基础地址 |
+| `DEEPSEEK_API_KEY` | — | DeepSeek 搜索 API 密钥 |
+| `DEEPSEEK_API_URL` | `https://api.deepseek.com` | DeepSeek API 基础地址 |
 | `REDIS_URL` | `redis://redis:6379` | Redis 连接地址 |
 | `CACHE_TTL_WEB` | `600` | Web 搜索缓存时间（秒） |
 | `CACHE_TTL_NEWS` | `300` | 新闻搜索缓存时间（秒） |

@@ -94,6 +94,8 @@ See [.env.example](.env.example) for all available options.
 | `TAVILY_API_KEY` | — | Tavily Search API key |
 | `FIRECRAWL_API_KEY` | — | Firecrawl API key |
 | `FIRECRAWL_API_URL` | `https://api.firecrawl.dev` | Firecrawl API base URL |
+| `DEEPSEEK_API_KEY` | — | DeepSeek Search API key |
+| `DEEPSEEK_API_URL` | `https://api.deepseek.com` | DeepSeek API base URL |
 | `REDIS_URL` | `redis://redis:6379` | Redis connection URL |
 | `CACHE_TTL_WEB` | `600` | Web search cache TTL (seconds) |
 | `CACHE_TTL_NEWS` | `300` | News search cache TTL (seconds) |
