@@ -10,8 +10,6 @@ venv/
 *.egg-info/
 storage/images/*
 tests/
-specs/
-.specify/
 .claude/
 *.md
 .gitignore
