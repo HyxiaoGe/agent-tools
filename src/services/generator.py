@@ -478,11 +478,7 @@ async def call_seedream_images(
         model=model,
         provider="ark",
         http_client=http_client,
-        timeout_seconds=(
-            settings.seedream_pro_timeout_seconds
-            if model == "doubao-seedream-5-0-pro"
-            else settings.model_timeout_seconds
-        ),
+        timeout_seconds=_model_timeout(model, settings),
     )
     _log_fields.get({})["ark_request_id"] = resp.headers.get("x-tt-logid") or resp.headers.get("x-request-id")
 
@@ -835,6 +831,19 @@ def _grounding_applies(request: GenerateRequest, model: str) -> bool:
     return request.grounding and SUPPORTED_MODELS[model].grounding
 
 
+def _model_timeout(model: str, settings: Settings) -> float:
+    return (
+        settings.seedream_pro_timeout_seconds if model == "doubao-seedream-5-0-pro" else settings.model_timeout_seconds
+    )
+
+
+def _fallback_reserve(fallbacks: list[str], settings: Settings) -> float:
+    """Leave the first backup its own full model budget, so a slow primary never starves it."""
+    if not fallbacks:
+        return 0
+    return max(settings.fallback_reserve_seconds, _model_timeout(fallbacks[0], settings))
+
+
 async def _call_model(
     request: GenerateRequest,
     model: str,
@@ -848,11 +857,12 @@ async def _call_model(
     budget = current_budget()
     if budget is not None:
         await budget.checkpoint()
-    timeout = (
-        settings.seedream_pro_timeout_seconds if model == "doubao-seedream-5-0-pro" else settings.model_timeout_seconds
-    )
+    timeout = _model_timeout(model, settings)
     if budget is not None:
-        timeout = min(timeout, max(0, budget.remaining() - reserve_seconds))
+        remaining = budget.remaining()
+        reserved = remaining - reserve_seconds
+        # Keep the reserve only if this model can still start; otherwise it gets what is left.
+        timeout = min(timeout, max(0, reserved if reserved >= settings.min_model_budget_seconds else remaining))
     _log_fields.get().update(active_model=model, model_budget_seconds=timeout, stage="generation")
     state = ModelAttempt(time.monotonic() + timeout)
     token = _model_attempt.set(state)
@@ -1003,7 +1013,7 @@ async def _generate_with_fallback(
             settings,
             http_client,
             references,
-            reserve_seconds=settings.fallback_reserve_seconds if fallbacks else 0,
+            reserve_seconds=_fallback_reserve(fallbacks, settings),
         )
         return image_bytes, fmt, model
     except GenerationError as e:
