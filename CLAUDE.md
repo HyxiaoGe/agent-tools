@@ -17,7 +17,7 @@ AI image generation middleware. Wraps Google Gemini, Volcengine Seedream and Ali
 - Python 3.11+ required
 - Redis required at runtime (caching + rate limiting + lock)
 - LiteLLM Proxy required (`LITELLM_BASE_URL`, `LITELLM_API_KEY` env vars)
-- Upstream timeout: 300s per generation request, 2 retries on timeout/connect errors
+- Time budget: 135s per request across all models (see README "总等待预算与取消"); a timed-out model is never resent, connect errors retry within the budget
 - Cache TTL: 7 days; thundering-herd protection via Redis locks
 - Rate limits: 20 global / 5 per-IP per minute window
 

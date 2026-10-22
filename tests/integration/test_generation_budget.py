@@ -144,6 +144,25 @@ async def test_pro_budget_is_clipped_to_reserve_a_backup(client, budget_app):
 
 
 @pytest.mark.asyncio
+async def test_pro_reserves_the_backups_full_model_budget(client, budget_app):
+    app = budget_app
+    app.state.settings.generation_timeout_seconds = 0.6
+    app.state.settings.seedream_pro_timeout_seconds = 1
+    app.state.settings.model_timeout_seconds = 0.25
+    app.state.settings.fallback_reserve_seconds = 0.05
+    transport = BlockingTransport(block_all=True)
+    install(app, transport)
+    response = await client.post("/v1/generate", json={**BODY, "model": PRO, "fallback_model": GEMINI})
+    assert response.status_code == 504
+    pro_read = transport.calls[0].extensions["timeout"]["read"]
+    backup_read = transport.calls[1].extensions["timeout"]["read"]
+    # Pro stops early enough that the backup still gets its whole 0.25s model budget.
+    assert pro_read < 0.6 - 0.25
+    assert backup_read > 0.2
+    assert len(transport.calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_reference_search_is_inside_total_budget(client, budget_app, monkeypatch):
     app = budget_app
     app.state.settings.generation_timeout_seconds = 0.1
