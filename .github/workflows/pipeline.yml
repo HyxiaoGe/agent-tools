@@ -9,7 +9,7 @@ on:
       service:
         description: 要重新部署的服务
         type: choice
-        options: [all, image, search, reader]
+        options: [all, gateway, image, search, reader]
         default: all
 
 permissions:
@@ -26,6 +26,7 @@ jobs:
   changes:
     runs-on: [self-hosted, dev-agent-tools]
     outputs:
+      gateway: ${{ steps.detect.outputs.gateway }}
       image: ${{ steps.detect.outputs.image }}
       search: ${{ steps.detect.outputs.search }}
       reader: ${{ steps.detect.outputs.reader }}
@@ -41,7 +42,7 @@ jobs:
           REQUESTED: ${{ inputs.service }}
         run: |
           set -euo pipefail
-          services="image search reader"
+          services="gateway image search reader"
           if [ "$EVENT" = "workflow_dispatch" ]; then
             for s in $services; do
               if [ "$REQUESTED" = "all" ] || [ "$REQUESTED" = "$s" ]; then v=true; else v=false; fi
@@ -62,9 +63,33 @@ jobs:
           fi
           echo "$changed"
           for s in $services; do
-            if echo "$changed" | grep -qE "^(services/$s/|\.github/)"; then v=true; else v=false; fi
+            dir="services/$s/"
+            [ "$s" = "gateway" ] && dir="gateway/"
+            if echo "$changed" | grep -qE "^(${dir}|\.github/)"; then v=true; else v=false; fi
             echo "$s=$v" >> "$GITHUB_OUTPUT"
           done
+
+  check-gateway:
+    needs: changes
+    if: needs.changes.outputs.gateway == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    defaults:
+      run:
+        working-directory: gateway
+    env:
+      # 用 dev 系统自带的 Python 3.12，不从 GitHub 下载解释器（dev 拉 GitHub 发布包经常中断）。
+      UV_PYTHON: /usr/bin/python3
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: ~/.local/bin/uv sync --frozen
+      - name: Ruff
+        run: |
+          ~/.local/bin/ruff check .
+          ~/.local/bin/ruff format --check .
+      - name: Tests
+        run: ~/.local/bin/uv run --frozen pytest -q
 
   check-image:
     needs: changes
@@ -114,7 +139,7 @@ jobs:
 
   # 三个服务共用 dev 上的一份部署目录（.env 与生图存储不入库），先同步到本次提交再分别部署。
   sync:
-    needs: [changes, check-image, check-search, check-reader]
+    needs: [changes, check-gateway, check-image, check-search, check-reader]
     if: >-
       always() && github.event_name != 'pull_request' &&
       github.ref == 'refs/heads/main' &&
@@ -208,3 +233,30 @@ jobs:
           exit 1
       - name: Functional read smoke
         run: python3 "$DEPLOY_DIR/services/reader/scripts/smoke_read.py"
+
+  deploy-gateway:
+    needs: [changes, sync, deploy-reader]
+    if: always() && needs.sync.result == 'success' && needs.changes.outputs.gateway == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    steps:
+      - name: Record start time
+        run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Deploy
+        run: |
+          cd "$DEPLOY_DIR/gateway"
+          docker compose up -d --build
+          docker image prune -f
+      - name: Health check
+        run: |
+          for i in $(seq 1 15); do
+            if curl -fsS http://127.0.0.1:8100/health; then
+              echo; echo "healthy after ${i} attempt(s)"; exit 0
+            fi
+            sleep 2
+          done
+          echo "gateway did not become healthy within 30s"
+          docker logs --tail 50 agent-tools-gateway
+          exit 1
+      - name: Push deploy metrics
+        if: always()
+        run: timeout 15s bash ~/scripts/push-deploy-metrics.sh agent-tools-gateway main "${{ job.status }}" "${{ env.BUILD_START }}" || echo "deploy metrics push failed, ignored"

@@ -1,0 +1,27 @@
+name: agent-tools-gateway
+services:
+  gateway:
+    build: .
+    container_name: agent-tools-gateway
+    env_file: .env
+    environment:
+      - TZ=Asia/Shanghai
+    # 只在本机暴露，便于部署健康检查；其他容器经 middleware_default 网络按容器名访问。
+    ports:
+      - "127.0.0.1:8100:8100"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./storage:/app/storage
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    restart: unless-stopped
+    networks:
+      - middleware
+
+networks:
+  middleware:
+    external: true
+    name: middleware_default
