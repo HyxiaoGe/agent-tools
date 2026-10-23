@@ -2,6 +2,8 @@ name: agent-tools-gateway
 services:
   gateway:
     build: .
+    # dev 部署时由 deploy-from-acr.sh 传入 ACR 镜像；未传时用当前已部署的版本，本地开发会按 build 构建。
+    image: ${AGENT_TOOLS_IMAGE:-agent-tools/gateway:current}
     container_name: agent-tools-gateway
     env_file: .env
     environment:

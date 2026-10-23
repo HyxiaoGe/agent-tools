@@ -21,6 +21,9 @@ concurrency:
 
 env:
   DEPLOY_DIR: /home/heyanxiao/project/agent-tools
+  # 镜像在 Windows 构建机上构建并推到 ACR（个人版，深圳），dev 只拉镜像部署。
+  REGISTRY: crpi-77w10wlykpqilmmb.cn-shenzhen.personal.cr.aliyuncs.com
+  IMAGE_PREFIX: crpi-77w10wlykpqilmmb.cn-shenzhen.personal.cr.aliyuncs.com/seanfield
 
 jobs:
   changes:
@@ -137,6 +140,62 @@ jobs:
       - name: Run unit tests
         run: python -m unittest -v test_main
 
+  publish:
+    needs: [changes, check-gateway, check-image, check-search, check-reader]
+    if: >-
+      always() && github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
+      !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') &&
+      (needs.changes.outputs.gateway == 'true' || needs.changes.outputs.image == 'true' ||
+       needs.changes.outputs.search == 'true' || needs.changes.outputs.reader == 'true')
+    runs-on: [self-hosted, Windows, X64, agent-tools-build]
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
+    env:
+      SERVICES: >-
+        ${{ needs.changes.outputs.gateway == 'true' && 'gateway,' || '' }}${{ needs.changes.outputs.image == 'true' && 'image,' || '' }}${{ needs.changes.outputs.search == 'true' && 'search,' || '' }}${{ needs.changes.outputs.reader == 'true' && 'reader,' || '' }}
+    steps:
+      - name: Configure Docker credential directory
+        # 构建机上的 Fusion runner 用同一个服务账号，凭据按任务隔离，互不覆盖。
+        run: |
+          $dockerConfig = Join-Path $env:RUNNER_TEMP ".docker-$env:GITHUB_RUN_ID-$env:GITHUB_JOB"
+          New-Item -ItemType Directory -Force -Path $dockerConfig | Out-Null
+          "DOCKER_CONFIG=$dockerConfig" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify Docker access
+        run: |
+          Write-Host "RUNNER_NAME=$env:RUNNER_NAME"
+          docker version
+          if ($LASTEXITCODE -ne 0) { Write-Host "Docker Engine is unavailable on this runner."; exit $LASTEXITCODE }
+      - name: Login to ACR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+          # 凭据目录由最后一步统一删除。
+          logout: false
+      - name: Build and push images
+        env:
+          HTTP_PROXY: http://127.0.0.1:7897
+          HTTPS_PROXY: http://127.0.0.1:7897
+          NO_PROXY: localhost,127.0.0.1,::1
+        timeout-minutes: 30
+        run: |
+          & ".github/scripts/windows-publish.ps1" -Services "${env:SERVICES}" -ImagePrefix "${env:IMAGE_PREFIX}" -ImageTag "${env:GITHUB_SHA}"
+      - name: Cleanup local images and credentials
+        if: always()
+        run: |
+          foreach ($service in ($env:SERVICES -split "," | Where-Object { $_ })) {
+            docker image rm "${env:IMAGE_PREFIX}/agent-tools-${service}:${env:GITHUB_SHA}" 2>$null
+          }
+          if ($env:DOCKER_CONFIG -and (Test-Path $env:DOCKER_CONFIG)) { Remove-Item -Recurse -Force $env:DOCKER_CONFIG }
+          exit 0
+
   # 三个服务共用 dev 上的一份部署目录（.env 与生图存储不入库），先同步到本次提交再分别部署。
   sync:
     needs: [changes, check-gateway, check-image, check-search, check-reader]
@@ -165,17 +224,17 @@ jobs:
           fi
 
   deploy-image:
-    needs: [changes, sync]
-    if: always() && needs.sync.result == 'success' && needs.changes.outputs.image == 'true'
+    needs: [changes, sync, publish]
+    if: always() && needs.sync.result == 'success' && needs.publish.result == 'success' && needs.changes.outputs.image == 'true'
     runs-on: [self-hosted, dev-agent-tools]
     steps:
       - name: Record start time
         run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
       - name: Deploy
-        run: |
-          cd "$DEPLOY_DIR/services/image"
-          docker compose up -d --build
-          docker image prune -f
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: bash "$DEPLOY_DIR/.github/scripts/deploy-from-acr.sh" image
       - name: Health check
         run: |
           # compose up 在应用就绪前就返回；容器反复崩溃必须让部署失败。
@@ -193,18 +252,17 @@ jobs:
         run: timeout 15s bash ~/scripts/push-deploy-metrics.sh image-service main "${{ job.status }}" "${{ env.BUILD_START }}" || echo "deploy metrics push failed, ignored"
 
   deploy-search:
-    needs: [changes, sync, deploy-image]
-    if: always() && needs.sync.result == 'success' && needs.changes.outputs.search == 'true'
+    needs: [changes, sync, publish, deploy-image]
+    if: always() && needs.sync.result == 'success' && needs.publish.result == 'success' && needs.changes.outputs.search == 'true'
     runs-on: [self-hosted, dev-agent-tools]
     steps:
       - name: Record start time
         run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
       - name: Deploy
-        run: |
-          cd "$DEPLOY_DIR/services/search"
-          docker compose up -d --build
-          docker image prune -f
-          docker builder prune --filter "until=72h" -f
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: bash "$DEPLOY_DIR/.github/scripts/deploy-from-acr.sh" search
       - name: Health check
         run: |
           for i in $(seq 1 30); do
@@ -221,15 +279,15 @@ jobs:
         run: timeout 15s bash ~/scripts/push-deploy-metrics.sh search-service main "${{ job.status }}" "${{ env.BUILD_START }}" || echo "deploy metrics push failed, ignored"
 
   deploy-reader:
-    needs: [changes, sync, deploy-search]
-    if: always() && needs.sync.result == 'success' && needs.changes.outputs.reader == 'true'
+    needs: [changes, sync, publish, deploy-search]
+    if: always() && needs.sync.result == 'success' && needs.publish.result == 'success' && needs.changes.outputs.reader == 'true'
     runs-on: [self-hosted, dev-agent-tools]
     steps:
       - name: Deploy
-        run: |
-          cd "$DEPLOY_DIR/services/reader"
-          docker compose up -d --build
-          docker image prune -f
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: bash "$DEPLOY_DIR/.github/scripts/deploy-from-acr.sh" reader
       - name: Health check
         run: |
           # reader 不再暴露端口，在容器内检查。
@@ -246,17 +304,17 @@ jobs:
         run: docker exec -i reader-service python - < "$DEPLOY_DIR/services/reader/scripts/smoke_read.py"
 
   deploy-gateway:
-    needs: [changes, sync, deploy-reader]
-    if: always() && needs.sync.result == 'success' && needs.changes.outputs.gateway == 'true'
+    needs: [changes, sync, publish, deploy-reader]
+    if: always() && needs.sync.result == 'success' && needs.publish.result == 'success' && needs.changes.outputs.gateway == 'true'
     runs-on: [self-hosted, dev-agent-tools]
     steps:
       - name: Record start time
         run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
       - name: Deploy
-        run: |
-          cd "$DEPLOY_DIR/gateway"
-          docker compose up -d --build
-          docker image prune -f
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: bash "$DEPLOY_DIR/.github/scripts/deploy-from-acr.sh" gateway
       - name: Health check
         run: |
           for i in $(seq 1 15); do

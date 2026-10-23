@@ -363,7 +363,7 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("python -m unittest discover", workflow)
         self.assertLess(
             workflow.index(explicit_test_command),
-            workflow.index('cd "$DEPLOY_DIR/services/reader"'),
+            workflow.index('deploy-from-acr.sh" reader'),
         )
 
     def test_workflow_runs_real_read_smoke_after_liveness_check(self):

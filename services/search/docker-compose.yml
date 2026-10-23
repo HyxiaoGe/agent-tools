@@ -2,13 +2,13 @@ name: search-service
 services:
   search-service:
     build: .
+    # dev 部署时由 deploy-from-acr.sh 传入 ACR 镜像；未传时用当前已部署的版本，本地开发会按 build 构建。
+    image: ${AGENT_TOOLS_IMAGE:-agent-tools/search:current}
     container_name: search-service
     env_file: .env
     environment:
       # search 自己的 redis（缓存 + Firecrawl 每日用量计数），不再用共享的 middleware-redis。
       - REDIS_URL=redis://search-redis:6379
-    volumes:
-      - .:/app
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:
