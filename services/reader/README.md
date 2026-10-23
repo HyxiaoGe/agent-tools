@@ -101,8 +101,10 @@ ssh dev 'docker exec reader-service python scripts/check_jina_keys.py'   # accou
 python -m unittest test_main
 ```
 
-没有 PR CI。push 到 master 触发 self-hosted 部署（`.github/workflows/deploy.yml`）：单元测试 → `docker run`（key 从仓库 Secret 注入）→ `/health` → 真实读取冒烟（`scripts/smoke_read.py`）。改了 Secret 要手动重新部署才生效：
+PR 与 push 到 `main` 由仓库根目录的流水线（`.github/workflows/pipeline.yml`）执行单元测试；合入 `main` 且本目录有改动时部署到 dev：`docker compose up -d --build` → `/health` → 真实读取冒烟（`scripts/smoke_read.py`）。
+
+各上游 key 放在 dev 部署目录的 `services/reader/.env`（不入库，变量见上表）。改了 `.env` 后手动重新部署：
 
 ```bash
-gh workflow run deploy.yml -R HyxiaoGe/reader-service
+gh workflow run pipeline.yml -R HyxiaoGe/agent-tools -f service=reader
 ```

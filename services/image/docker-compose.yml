@@ -1,3 +1,4 @@
+name: image-service
 services:
   image-service:
     build: .
