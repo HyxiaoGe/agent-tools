@@ -3,12 +3,22 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Enough for a few views of one subject (front / back / side); every image is
 # downloaded per request and sent upstream inline, so more costs latency and size.
 MAX_REFERENCE_IMAGES = 3
 ImageQuality = Literal["standard", "high"]
+
+
+class OptimizePromptOptions(BaseModel):
+    """方舟提示词优化配置，省略 mode 时采用官方默认值。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["standard", "fast"] = Field(
+        "standard", description="Prompt optimization mode: standard favors quality; fast favors latency."
+    )
 
 
 class GenerateRequest(BaseModel):
@@ -29,6 +39,12 @@ class GenerateRequest(BaseModel):
         "limits; Gemini does not use size. Default 1024x1024.",
     )
     style: str | None = Field(None, description="Style hint e.g. watercolor")
+    optimize_prompt_options: OptimizePromptOptions | None = Field(
+        None,
+        description="Seedream prompt optimization settings. Omit to use the upstream standard mode. "
+        "fast requires Seedream 5.0 Pro or an actual 4.0 upstream model; Flash, Lite and 4.5 do not support it. "
+        "Unsupported fallback models use their default optimization behavior.",
+    )
     fallback_model: str | None = Field(
         None,
         description="Model to retry with if the primary model's content filter blocks the request or its "
