@@ -9,7 +9,7 @@ on:
       service:
         description: 要重新部署的服务
         type: choice
-        options: [all, gateway, image, search, reader]
+        options: [all, gateway, image, search, reader, trends]
         default: all
 
 permissions:
@@ -33,6 +33,7 @@ jobs:
       image: ${{ steps.detect.outputs.image }}
       search: ${{ steps.detect.outputs.search }}
       reader: ${{ steps.detect.outputs.reader }}
+      trends: ${{ steps.detect.outputs.trends }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,7 +46,7 @@ jobs:
           REQUESTED: ${{ inputs.service }}
         run: |
           set -euo pipefail
-          services="gateway image search reader"
+          services="gateway image search reader trends"
           if [ "$EVENT" = "workflow_dispatch" ]; then
             for s in $services; do
               if [ "$REQUESTED" = "all" ] || [ "$REQUESTED" = "$s" ]; then v=true; else v=false; fi
@@ -163,7 +164,8 @@ jobs:
       github.ref == 'refs/heads/main' &&
       !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') &&
       (needs.changes.outputs.gateway == 'true' || needs.changes.outputs.image == 'true' ||
-       needs.changes.outputs.search == 'true' || needs.changes.outputs.reader == 'true')
+       needs.changes.outputs.search == 'true' || needs.changes.outputs.reader == 'true' ||
+       needs.changes.outputs.trends == 'true')
     runs-on: [self-hosted, Windows, X64, agent-tools-build]
     timeout-minutes: 40
     defaults:
@@ -171,7 +173,7 @@ jobs:
         shell: powershell -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
     env:
       SERVICES: >-
-        ${{ needs.changes.outputs.gateway == 'true' && 'gateway,' || '' }}${{ needs.changes.outputs.image == 'true' && 'image,' || '' }}${{ needs.changes.outputs.search == 'true' && 'search,' || '' }}${{ needs.changes.outputs.reader == 'true' && 'reader,' || '' }}
+        ${{ needs.changes.outputs.gateway == 'true' && 'gateway,' || '' }}${{ needs.changes.outputs.image == 'true' && 'image,' || '' }}${{ needs.changes.outputs.search == 'true' && 'search,' || '' }}${{ needs.changes.outputs.reader == 'true' && 'reader,' || '' }}${{ needs.changes.outputs.trends == 'true' && 'trends,' || '' }}
     steps:
       - name: Configure Docker credential directory
         # 构建机上的 Fusion runner 用同一个服务账号，凭据按任务隔离，互不覆盖。
@@ -319,8 +321,31 @@ jobs:
       - name: Functional read smoke
         run: docker exec -i reader-service python - < "$DEPLOY_DIR/services/reader/scripts/smoke_read.py"
 
-  deploy-gateway:
+  deploy-trends:
     needs: [changes, sync, publish, deploy-reader]
+    if: always() && needs.sync.result == 'success' && needs.publish.result == 'success' && needs.changes.outputs.trends == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    steps:
+      - name: Deploy
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: bash "$DEPLOY_DIR/.github/scripts/deploy-from-acr.sh" trends
+      - name: MCP smoke
+        run: |
+          # 没有健康检查接口，用一次 MCP 握手 + 查询确认服务可用且读得到数据。
+          for i in $(seq 1 15); do
+            if docker exec -i trends-mcp python - < "$DEPLOY_DIR/services/trends/scripts/smoke_mcp.py"; then
+              echo "ready after ${i} attempt(s)"; exit 0
+            fi
+            sleep 2
+          done
+          echo "trends-mcp did not become ready within 30s"
+          docker logs --tail 50 trends-mcp
+          exit 1
+
+  deploy-gateway:
+    needs: [changes, sync, publish, deploy-reader, deploy-trends]
     if: always() && needs.sync.result == 'success' && needs.publish.result == 'success' && needs.changes.outputs.gateway == 'true'
     runs-on: [self-hosted, dev-agent-tools]
     steps:

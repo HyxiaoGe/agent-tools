@@ -27,20 +27,24 @@ class Settings(BaseSettings):
 
     products: dict[str, ProductConfig] = Field(default_factory=dict)
 
-    # image-service 跑在宿主网络（要用宿主上的代理），其余两个在 middleware_default 网络。
+    # image-service 跑在宿主网络（要用宿主上的代理），其余在专用网络 agent-tools-internal。
     image_upstream: str = "http://host.docker.internal:8090"
     search_upstream: str = "http://search-service:8080"
     reader_upstream: str = "http://reader-service:8091"
+    # TrendRadar 官方 MCP 镜像，只读 dev 上 TrendRadar 抓取的热榜数据。
+    trends_upstream: str = "http://trends-mcp:3333"
 
     # 超时要大于调用方自己的超时，由调用方决定放弃；image-service 内部总预算 135s。
     image_timeout_seconds: float = 180
     search_timeout_seconds: float = 30
     reader_timeout_seconds: float = 30
+    trends_timeout_seconds: float = 60
 
     # 按服务分开的连接池：某个服务堆积慢请求时只占满自己的池，不拖住其他服务。
     image_max_connections: int = 16
     search_max_connections: int = 32
     reader_max_connections: int = 32
+    trends_max_connections: int = 16
     # 池满时排队等待的上限，超过即返回 503。
     pool_wait_seconds: float = 5
 
@@ -65,4 +69,5 @@ class Settings(BaseSettings):
             "image": Upstream("image", s.image_upstream, s.image_timeout_seconds, s.image_max_connections),
             "search": Upstream("search", s.search_upstream, s.search_timeout_seconds, s.search_max_connections),
             "reader": Upstream("reader", s.reader_upstream, s.reader_timeout_seconds, s.reader_max_connections),
+            "trends": Upstream("trends", s.trends_upstream, s.trends_timeout_seconds, s.trends_max_connections),
         }

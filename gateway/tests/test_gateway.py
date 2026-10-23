@@ -53,7 +53,7 @@ class Upstreams:
     """记录每个服务收到的请求，按服务返回预设响应或抛出预设异常。"""
 
     def __init__(self):
-        self.requests: dict[str, list[httpx.Request]] = {"image": [], "search": [], "reader": []}
+        self.requests: dict[str, list[httpx.Request]] = {"image": [], "search": [], "reader": [], "trends": []}
         self.handlers: dict[str, Callable[[httpx.Request], httpx.Response]] = {}
 
     def transport(self, service: str) -> httpx.MockTransport:
@@ -74,7 +74,7 @@ def upstreams() -> Upstreams:
 
 @pytest.fixture
 async def client(settings, upstreams):
-    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader")})
+    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader", "trends")})
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://gateway") as http:
@@ -155,6 +155,19 @@ async def test_caller_cannot_assert_another_product(client, upstreams):
     await client.get("/reader/read", headers=auth(VALIDATION_KEY, **{"X-Caller-App": "fusion"}))
     (sent,) = upstreams.requests["reader"]
     assert sent.headers["x-caller-app"] == "validation"
+
+
+async def test_trends_mcp_requires_key_and_forwards_path(client, upstreams):
+    response = await client.post("/trends/mcp", content=b'{"jsonrpc":"2.0"}')
+    assert response.status_code == 401
+    assert upstreams.requests["trends"] == []
+
+    await client.post("/trends/mcp", content=b'{"jsonrpc":"2.0"}', headers=auth())
+    (sent,) = upstreams.requests["trends"]
+    assert sent.url.path == "/mcp"
+    assert sent.headers["x-caller-app"] == "fusion"
+    # 只有 image-service 需要原密钥，其他上游拿不到。
+    assert "authorization" not in sent.headers
 
 
 async def test_image_receives_its_own_identity_headers(client, upstreams):
@@ -384,7 +397,7 @@ async def call_asgi(app, path: str, *, headers: list[tuple[bytes, bytes]] = (), 
 
 @pytest.mark.parametrize("path", ["/image/static/../mcp", "/image/static/./x", "/search/a/../b"])
 async def test_dot_segments_are_rejected(settings, upstreams, path):
-    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader")})
+    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader", "trends")})
     async with app.router.lifespan_context(app):
         sent = await call_asgi(app, path)
     assert sent[0]["status"] == 400
@@ -418,7 +431,7 @@ async def test_usage_is_recorded_when_caller_disconnects_after_full_response(set
     upstreams.handlers["image"] = lambda request: httpx.Response(
         404, headers={"content-length": "9"}, stream=SlowClosingStream(b"Not Found")
     )
-    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader")})
+    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader", "trends")})
     headers = [(b"authorization", f"Bearer {FUSION_KEY}".encode()), (b"x-caller-scene", b"smoke_test")]
     async with app.router.lifespan_context(app):
         sent = await call_asgi(app, "/image/health", headers=headers, disconnect_after_body=True)
