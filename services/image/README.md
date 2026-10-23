@@ -136,7 +136,7 @@ python scripts/check_architecture.py                                  # 分层�
 
 ```bash
 ssh dev
-cd ~/project/image-service
+cd ~/project/agent-tools/services/image
 vi .env                       # 修改 DEFAULT_MODEL / DEFAULT_FALLBACK_MODEL
 docker compose up -d --force-recreate   # 重新创建容器才会加载新的 .env；单纯 restart 不会
 curl -s localhost:8090/v1/health

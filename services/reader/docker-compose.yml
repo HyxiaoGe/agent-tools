@@ -1,0 +1,17 @@
+name: reader-service
+services:
+  reader-service:
+    build: .
+    image: reader-service
+    container_name: reader-service
+    env_file: .env
+    ports:
+      - "8091:8091"
+    restart: always
+    networks:
+      - middleware
+
+networks:
+  middleware:
+    external: true
+    name: middleware_default

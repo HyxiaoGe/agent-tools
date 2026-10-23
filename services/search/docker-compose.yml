@@ -1,3 +1,4 @@
+name: search-service
 services:
   search-service:
     build: .

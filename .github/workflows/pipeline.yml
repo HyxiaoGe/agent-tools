@@ -1,0 +1,210 @@
+name: Pipeline
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 要重新部署的服务
+        type: choice
+        options: [all, image, search, reader]
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DEPLOY_DIR: /home/heyanxiao/project/agent-tools
+
+jobs:
+  changes:
+    runs-on: [self-hosted, dev-agent-tools]
+    outputs:
+      image: ${{ steps.detect.outputs.image }}
+      search: ${{ steps.detect.outputs.search }}
+      reader: ${{ steps.detect.outputs.reader }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          REQUESTED: ${{ inputs.service }}
+        run: |
+          set -euo pipefail
+          services="image search reader"
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            for s in $services; do
+              if [ "$REQUESTED" = "all" ] || [ "$REQUESTED" = "$s" ]; then v=true; else v=false; fi
+              echo "$s=$v" >> "$GITHUB_OUTPUT"
+            done
+            exit 0
+          fi
+          if [ "$EVENT" = "pull_request" ]; then
+            base="$BASE_SHA"
+          else
+            base="$BEFORE_SHA"
+          fi
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            # 新分支或历史被改写时无法求差异，全部服务都跑一遍。
+            changed=".github/"
+          else
+            changed=$(git diff --name-only "$base" HEAD)
+          fi
+          echo "$changed"
+          for s in $services; do
+            if echo "$changed" | grep -qE "^(services/$s/|\.github/)"; then v=true; else v=false; fi
+            echo "$s=$v" >> "$GITHUB_OUTPUT"
+          done
+
+  check-image:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    defaults:
+      run:
+        working-directory: services/image
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ruff lint
+        run: ~/.local/bin/ruff check .
+      - name: Architecture check
+        run: python3 scripts/check_architecture.py
+
+  check-search:
+    needs: changes
+    if: needs.changes.outputs.search == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    defaults:
+      run:
+        working-directory: services/search
+    steps:
+      - uses: actions/checkout@v4
+      - name: Architecture check
+        run: python3 scripts/check_architecture.py
+      - name: Ruff lint
+        run: ~/.local/bin/ruff check .
+
+  check-reader:
+    needs: changes
+    if: needs.changes.outputs.reader == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    defaults:
+      run:
+        working-directory: services/reader
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          # 不用 Actions 缓存：self-hosted 机器本地已有 pip 缓存
+      - name: Install test dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run unit tests
+        run: python -m unittest -v test_main
+
+  # 三个服务共用 dev 上的一份部署目录（.env 与生图存储不入库），先同步到本次提交再分别部署。
+  sync:
+    needs: [changes, check-image, check-search, check-reader]
+    if: >-
+      always() && github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
+      !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: [self-hosted, dev-agent-tools]
+    steps:
+      - name: Sync deploy checkout
+        run: |
+          set -euo pipefail
+          cd "$DEPLOY_DIR"
+          git fetch -q origin main
+          git checkout -q --detach "$GITHUB_SHA"
+          git log --oneline -1
+
+  deploy-image:
+    needs: [changes, sync]
+    if: always() && needs.sync.result == 'success' && needs.changes.outputs.image == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    steps:
+      - name: Record start time
+        run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Deploy
+        run: |
+          cd "$DEPLOY_DIR/services/image"
+          docker compose up -d --build
+          docker image prune -f
+      - name: Health check
+        run: |
+          # compose up 在应用就绪前就返回；容器反复崩溃必须让部署失败。
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8090/v1/health; then
+              echo; echo "healthy after ${i} attempt(s)"; exit 0
+            fi
+            sleep 2
+          done
+          echo "image-service did not become healthy within 60s"
+          docker logs --tail 50 image-service
+          exit 1
+      - name: Push deploy metrics
+        if: always()
+        run: timeout 15s bash ~/scripts/push-deploy-metrics.sh image-service main "${{ job.status }}" "${{ env.BUILD_START }}" || echo "deploy metrics push failed, ignored"
+
+  deploy-search:
+    needs: [changes, sync, deploy-image]
+    if: always() && needs.sync.result == 'success' && needs.changes.outputs.search == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    steps:
+      - name: Record start time
+        run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Deploy
+        run: |
+          cd "$DEPLOY_DIR/services/search"
+          docker compose up -d --build
+          docker image prune -f
+          docker builder prune --filter "until=72h" -f
+      - name: Health check
+        run: |
+          for i in $(seq 1 30); do
+            if docker exec search-service python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)"; then
+              echo "healthy after ${i} attempt(s)"; exit 0
+            fi
+            sleep 2
+          done
+          echo "search-service did not become healthy within 60s"
+          docker logs --tail 50 search-service
+          exit 1
+      - name: Push deploy metrics
+        if: always()
+        run: timeout 15s bash ~/scripts/push-deploy-metrics.sh search-service main "${{ job.status }}" "${{ env.BUILD_START }}" || echo "deploy metrics push failed, ignored"
+
+  deploy-reader:
+    needs: [changes, sync, deploy-search]
+    if: always() && needs.sync.result == 'success' && needs.changes.outputs.reader == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    steps:
+      - name: Deploy
+        run: |
+          cd "$DEPLOY_DIR/services/reader"
+          docker compose up -d --build
+          docker image prune -f
+      - name: Health check
+        run: |
+          for i in $(seq 1 15); do
+            if curl -fsS http://localhost:8091/health; then
+              echo; echo "healthy after ${i} attempt(s)"; exit 0
+            fi
+            sleep 2
+          done
+          echo "reader-service did not become healthy within 30s"
+          docker logs --tail 50 reader-service
+          exit 1
+      - name: Functional read smoke
+        run: python3 "$DEPLOY_DIR/services/reader/scripts/smoke_read.py"
