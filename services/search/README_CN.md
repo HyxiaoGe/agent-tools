@@ -96,7 +96,7 @@ Claude Code 集成配置：
 | `FIRECRAWL_API_URL` | `https://api.firecrawl.dev` | Firecrawl API 基础地址 |
 | `DEEPSEEK_API_KEY` | — | DeepSeek 搜索 API 密钥 |
 | `DEEPSEEK_API_URL` | `https://api.deepseek.com` | DeepSeek API 基础地址 |
-| `REDIS_URL` | `redis://redis:6379` | Redis 连接地址 |
+| `REDIS_URL` | `redis://search-redis:6379` | Redis 连接地址（docker compose 固定为自带的 search-redis） |
 | `CACHE_TTL_WEB` | `600` | Web 搜索缓存时间（秒） |
 | `CACHE_TTL_NEWS` | `300` | 新闻搜索缓存时间（秒） |
 | `RATE_LIMIT_GLOBAL` | `40/second` | 全局限流 |

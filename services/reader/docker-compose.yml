@@ -5,13 +5,12 @@ services:
     image: reader-service
     container_name: reader-service
     env_file: .env
-    ports:
-      - "8091:8091"
+    # 不对外暴露端口：只有 agent-tools 网关经专用网络访问。
     restart: always
     networks:
-      - middleware
+      - agent-tools
 
 networks:
-  middleware:
+  agent-tools:
     external: true
-    name: middleware_default
+    name: agent-tools-internal
