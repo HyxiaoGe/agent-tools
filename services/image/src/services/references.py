@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import ipaddress
+import os
 import socket
 from dataclasses import dataclass
 from pathlib import Path
@@ -154,10 +155,14 @@ def _local_file(url: str, settings: Settings) -> Path | None:
     name = url[len(prefix) :]
     if not name or "/" in name or "\\" in name or name.startswith("."):
         raise ValueError("is not a valid image path")
-    path = Path(settings.storage_dir) / name
-    if not path.is_file():
+    # The resolved file must stay inside the storage dir (this also rules out symlinks pointing elsewhere).
+    root = os.path.realpath(settings.storage_dir)
+    path = os.path.realpath(os.path.join(root, name))
+    if not path.startswith(root + os.sep):
+        raise ValueError("is not a valid image path")
+    if not os.path.isfile(path):
         raise ValueError("was not found")
-    return path
+    return Path(path)
 
 
 def _sniff_mime(data: bytes) -> str | None:

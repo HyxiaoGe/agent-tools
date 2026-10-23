@@ -181,6 +181,24 @@ async def test_own_generated_image_is_read_from_storage(client, web, settings):
     assert parts[1]["image_url"]["url"] == data_uri("image/png", stored)
 
 
+@pytest.mark.asyncio
+async def test_own_url_symlinked_outside_storage_is_refused(client, web, settings, tmp_path):
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(PNG)
+    (Path(settings.storage_dir) / "link.png").symlink_to(outside)
+    own_url = f"{settings.service_base_url}{settings.static_url_prefix}/link.png"
+
+    assert_invalid(await post(client, reference_images=[own_url]), "is not a valid image path")
+    assert web.fetched() == []
+
+
+@pytest.mark.asyncio
+async def test_own_url_for_a_missing_file_is_refused(client, web, settings):
+    own_url = f"{settings.service_base_url}{settings.static_url_prefix}/missing.png"
+
+    assert_invalid(await post(client, reference_images=[own_url]), "was not found")
+
+
 # --- caching -----------------------------------------------------------------
 
 
