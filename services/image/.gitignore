@@ -1,0 +1,19 @@
+.env
+storage/images/*
+storage/*.sqlite3*
+!storage/images/.gitkeep
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+.DS_Store
+*.tmp
+*.swp
+
+# Claude Code personal settings
+.claude/settings.local.json

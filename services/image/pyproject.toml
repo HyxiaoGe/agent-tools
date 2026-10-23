@@ -1,0 +1,48 @@
+[project]
+name = "image-service"
+version = "0.2.0"
+description = "AI image generation middleware service via OpenRouter API"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "httpx>=0.28.0",
+    "redis[hiredis]>=5.2.0",
+    "pydantic-settings>=2.7.0",
+    "structlog>=24.4.0",
+    "fastmcp>=3.4,<5",
+    "python-multipart>=0.0.18",
+    "prometheus-client>=0.21.0",
+    "anyio>=4.5",
+    "volcenginesdk-core>=5,<6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "fakeredis>=2.26.0",
+    "ruff>=0.8.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
