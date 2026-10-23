@@ -15,6 +15,9 @@ import direct_read
 import main
 
 
+PIPELINE_WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "pipeline.yml"
+
+
 class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.url = "https://example.com/private?token=secret"
@@ -353,27 +356,23 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"--port", "8091", "--no-access-log"', dockerfile)
 
     def test_workflow_runs_explicit_tests_before_deploy(self):
-        workflow = (
-            Path(__file__).with_name(".github") / "workflows" / "deploy.yml"
-        ).read_text()
+        workflow = PIPELINE_WORKFLOW.read_text()
 
         explicit_test_command = "python -m unittest -v test_main"
         self.assertIn(explicit_test_command, workflow)
         self.assertNotIn("python -m unittest discover", workflow)
         self.assertLess(
             workflow.index(explicit_test_command),
-            workflow.index("docker build -t reader-service ."),
+            workflow.index('cd "$DEPLOY_DIR/services/reader"'),
         )
 
     def test_workflow_runs_real_read_smoke_after_liveness_check(self):
-        workflow = (
-            Path(__file__).with_name(".github") / "workflows" / "deploy.yml"
-        ).read_text()
+        workflow = PIPELINE_WORKFLOW.read_text()
 
-        smoke_command = "python scripts/smoke_read.py"
+        smoke_command = 'python3 "$DEPLOY_DIR/services/reader/scripts/smoke_read.py"'
         self.assertIn(smoke_command, workflow)
         self.assertLess(
-            workflow.index("curl -sf http://localhost:8091/health"),
+            workflow.index("curl -fsS http://localhost:8091/health"),
             workflow.index(smoke_command),
         )
 
@@ -505,16 +504,14 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("usable=1/4", output)
         self.assertNotIn("tvly-", output)
 
-    def test_container_ships_scripts_and_pool_secret(self):
+    def test_container_ships_scripts_and_loads_keys_from_untracked_env(self):
         dockerfile = Path(__file__).with_name("Dockerfile").read_text()
-        workflow = (
-            Path(__file__).with_name(".github") / "workflows" / "deploy.yml"
-        ).read_text()
+        compose = Path(__file__).with_name("docker-compose.yml").read_text()
+        gitignore = Path(__file__).with_name(".gitignore").read_text().splitlines()
 
         self.assertIn("COPY scripts/ scripts/", dockerfile)
-        self.assertIn("-e TAVILY_API_KEYS=${{ secrets.TAVILY_API_KEYS }}", workflow)
-        self.assertIn("-e FIRECRAWL_API_KEYS=${{ secrets.FIRECRAWL_API_KEYS }}", workflow)
-        self.assertIn("-e JINA_API_KEYS=${{ secrets.JINA_API_KEYS }}", workflow)
+        self.assertIn("env_file: .env", compose)
+        self.assertIn(".env", gitignore)
 
     def test_jina_key_check_script_never_prints_keys(self):
         script_path = Path(__file__).with_name("scripts") / "check_jina_keys.py"
