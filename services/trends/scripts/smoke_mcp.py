@@ -1,4 +1,5 @@
-"""部署冒烟：在 trends-mcp 容器内走一遍 MCP 握手，确认工具齐全且能读到 TrendRadar 的数据。
+"""部署冒烟：在 trends-mcp 容器内走一遍 MCP 握手，确认工具齐全、能读到 TrendRadar 的数据，
+且 contract_server.py 的契约生效（参数带可选值、上游出错标记为 isError）。
 
 用法：docker exec -i trends-mcp python - < scripts/smoke_mcp.py
 """
@@ -19,10 +20,15 @@ REQUIRED_TOOLS = {
 
 
 def post(payload, session=None):
-    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
     if session:
         headers["mcp-session-id"] = session
-    request = urllib.request.Request(URL, data=json.dumps(payload).encode(), headers=headers, method="POST")
+    request = urllib.request.Request(
+        URL, data=json.dumps(payload).encode(), headers=headers, method="POST"
+    )
     with urllib.request.urlopen(request, timeout=20) as response:
         body = response.read().decode()
         session = response.headers.get("mcp-session-id") or session
@@ -55,17 +61,36 @@ def main():
     if missing:
         sys.exit(f"missing tools: {sorted(missing)}")
 
-    call = {
-        "jsonrpc": "2.0",
-        "id": 3,
-        "method": "tools/call",
-        "params": {"name": "get_latest_news", "arguments": {"limit": 3}},
+    schemas = {
+        tool["name"]: tool["inputSchema"]["properties"]
+        for tool in listed["result"]["tools"]
     }
-    result, _ = post(call, session)
-    text = "".join(item.get("text", "") for item in result["result"].get("content", []))
-    if result["result"].get("isError") or not text:
+    if "enum" not in schemas["search_news"]["sort_by"]:
+        sys.exit("contract not applied: search_news.sort_by has no enum")
+
+    def call(request_id, name, arguments):
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }
+        result, _ = post(payload, session)
+        text = "".join(
+            item.get("text", "") for item in result["result"].get("content", [])
+        )
+        return bool(result["result"].get("isError")), text
+
+    is_error, text = call(3, "get_latest_news", {"limit": 3})
+    if is_error or not text:
         sys.exit(f"get_latest_news failed: {text[:300]}")
-    print(f"ok: {len(names)} tools, get_latest_news returned {len(text)} chars")
+    # 参数合法但上游拒绝（超出 365 天）：必须标记为错误，而不是当成功返回。
+    rejected, rejected_text = call(4, "get_news_by_date", {"date_range": "2020-01-01"})
+    if not rejected:
+        sys.exit(f"upstream error not marked isError: {rejected_text[:300]}")
+    print(
+        f"ok: {len(names)} tools, get_latest_news returned {len(text)} chars, upstream errors marked isError"
+    )
 
 
 main()
