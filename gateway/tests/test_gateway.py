@@ -292,3 +292,58 @@ async def test_usage_report_groups_by_product_service_and_scene(client, settings
             "avg_duration_ms": report["breakdown"][0]["avg_duration_ms"],
         }
     ]
+
+
+async def test_generated_images_are_public_and_not_recorded(client, upstreams, settings):
+    upstreams.handlers["image"] = lambda request: httpx.Response(
+        200, headers={"content-type": "image/png"}, stream=httpx.ByteStream(b"png")
+    )
+    response = await client.get("/image/static/images/a.png", headers={"Authorization": "Bearer wrong"})
+    assert response.status_code == 200
+    assert response.content == b"png"
+    (sent,) = upstreams.requests["image"]
+    assert sent.url.path == "/static/images/a.png"
+    assert "authorization" not in sent.headers
+    assert "x-caller-app" not in sent.headers
+    assert usage_rows(settings) == []
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [("POST", "/image/static/images/a.png"), ("GET", "/search/static/a"), ("GET", "/image/v1/models")],
+)
+async def test_only_image_static_reads_skip_the_key(client, method, path):
+    response = await client.request(method, path)
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("path", ["/image/static/../mcp", "/image/static/./x", "/search/a/../b"])
+async def test_dot_segments_are_rejected(settings, upstreams, path):
+    # httpx 客户端会规范化路径，uvicorn 不会；直接按 ASGI 送原始路径模拟恶意请求。
+    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader")})
+    sent: list[dict] = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "headers": [],
+        "client": ("127.0.0.1", 1),
+        "server": ("gateway", 80),
+    }
+    async with app.router.lifespan_context(app):
+        await app(scope, receive, send)
+    assert sent[0]["status"] == 400
+    assert json.loads(sent[1]["body"])["error"] == "invalid_path"
+    assert upstreams.requests["image"] == upstreams.requests["search"] == []

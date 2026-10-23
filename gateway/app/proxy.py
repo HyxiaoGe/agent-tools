@@ -33,14 +33,24 @@ _CALLER_HEADERS = frozenset(
 
 
 def upstream_request_headers(
-    service: str, headers: Headers, caller: Caller, client_host: str | None
+    service: str, headers: Headers, caller: Caller | None, client_host: str | None
 ) -> list[tuple[str, str]]:
     forwarded = [
         (name, value)
         for name, value in headers.items()
         if name not in _HOP_BY_HOP and name not in _CALLER_HEADERS and name not in {"host", "content-length"}
     ]
-    forwarded.append(("x-caller-app", caller.app_id))
+    if caller is not None:
+        forwarded.extend(_caller_headers(service, headers, caller))
+    prior = headers.get("x-forwarded-for")
+    if client_host:
+        forwarded = [(n, v) for n, v in forwarded if n != "x-forwarded-for"]
+        forwarded.append(("x-forwarded-for", f"{prior}, {client_host}" if prior else client_host))
+    return forwarded
+
+
+def _caller_headers(service: str, headers: Headers, caller: Caller) -> list[tuple[str, str]]:
+    forwarded = [("x-caller-app", caller.app_id)]
     if caller.user:
         forwarded.append(("x-caller-user", caller.user))
     if caller.scene:
@@ -52,10 +62,6 @@ def upstream_request_headers(
             forwarded.append(("x-image-user", caller.user))
         if caller.scene:
             forwarded.append(("x-image-scene", caller.scene))
-    prior = headers.get("x-forwarded-for")
-    if client_host:
-        forwarded = [(n, v) for n, v in forwarded if n != "x-forwarded-for"]
-        forwarded.append(("x-forwarded-for", f"{prior}, {client_host}" if prior else client_host))
     return forwarded
 
 
@@ -91,13 +97,16 @@ async def forward(
     path: str,
     upstream: Upstream,
     client: httpx.AsyncClient,
-    caller: Caller,
+    caller: Caller | None,
     body: bytes,
     usage: UsageStore,
 ) -> Response:
+    """caller 为 None 只用于公开资源（生图结果图片），不带身份头、不记账。"""
     started = time.monotonic()
 
     async def finish(status: int, outcome: str) -> None:
+        if caller is None:
+            return
         duration_ms = int((time.monotonic() - started) * 1000)
         record = UsageRecord(
             ts=now_iso(),

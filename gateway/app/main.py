@@ -38,6 +38,16 @@ def _configure_logging() -> None:
     logger.propagate = False
 
 
+def _is_public(service: str, path: str, method: str) -> bool:
+    # 生图结果图片本身就是公开地址（返回给前端直接加载），调用方按同一入口下载时不需要密钥。
+    return service == "image" and method in {"GET", "HEAD"} and path.startswith("static/")
+
+
+def _has_dot_segment(path: str) -> bool:
+    # 拒绝 . / .. 路径段：否则 static/../mcp 这类路径会借公开前缀绕过鉴权。
+    return any(segment in {".", ".."} for segment in path.split("/"))
+
+
 def _client(upstream: Upstream, settings: Settings, transport: httpx.AsyncBaseTransport | None) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         base_url=upstream.base_url,
@@ -82,8 +92,10 @@ def create_app(
         upstream = upstreams.get(service)
         if upstream is None:
             return JSONResponse({"error": "not_found", "message": "Unknown service."}, status_code=404)
+        if _has_dot_segment(path):
+            return JSONResponse({"error": "invalid_path", "message": "Path must not contain dot segments."}, 400)
         try:
-            caller = authenticate(settings, request.headers)
+            caller = None if _is_public(service, path, request.method) else authenticate(settings, request.headers)
         except AuthError as exc:
             headers = {"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None
             return JSONResponse(
