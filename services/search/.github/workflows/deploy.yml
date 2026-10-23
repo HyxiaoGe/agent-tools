@@ -1,0 +1,48 @@
+name: Deploy to Dev Server
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Architecture check
+        run: python3 scripts/check_architecture.py
+
+      - name: Ruff lint
+        run: ~/.local/bin/ruff check .
+
+  deploy:
+    runs-on: self-hosted
+    needs: check
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Record start time
+        run: echo "BUILD_START=$(date +%s)" >> $GITHUB_ENV
+
+      - name: Deploy
+        run: |
+          cd ~/project/search-service
+          git pull
+          if git diff HEAD~1 --name-only | grep -qE 'pyproject\.toml|Dockerfile|docker-compose'; then
+            docker compose up -d --build
+          else
+            docker compose restart
+          fi
+          docker image prune -f
+          docker builder prune --filter "until=72h" -f
+
+      - name: Push deploy metrics
+        if: always()
+        run: |
+          if ! timeout 15s bash ~/scripts/push-deploy-metrics.sh search-service main "${{ job.status }}" "${{ env.BUILD_START }}"; then
+            echo "deploy metrics push failed, ignored"
+          fi

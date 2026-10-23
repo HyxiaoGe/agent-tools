@@ -1,0 +1,22 @@
+services:
+  search-service:
+    build: .
+    container_name: search-service
+    env_file: .env
+    volumes:
+      - .:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    restart: unless-stopped
+    networks:
+      - default
+      - middleware
+
+networks:
+  middleware:
+    external: true
+    name: middleware_default
