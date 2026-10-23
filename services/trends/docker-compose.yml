@@ -1,0 +1,28 @@
+name: trends
+services:
+  trends-mcp:
+    build: .
+    # dev 部署时由 deploy-from-acr.sh 传入 ACR 镜像；未传时用当前已部署的版本。
+    image: ${AGENT_TOOLS_IMAGE:-agent-tools/trends:current}
+    container_name: trends-mcp
+    environment:
+      - TZ=Asia/Shanghai
+      - MCP_PORT=3333
+    # 数据由 Sean 在 dev 上自行部署的 TrendRadar 抓取（~/project/TrendRadar），这里只读：
+    # 不开放的 trigger_crawl / sync_from_remote 即使被调用也写不进去。
+    volumes:
+      - ${TRENDRADAR_DIR:-/home/heyanxiao/project/TrendRadar}/config:/app/config:ro
+      - ${TRENDRADAR_DIR:-/home/heyanxiao/project/TrendRadar}/output:/app/output:ro
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    restart: unless-stopped
+    # 自身无鉴权，只在专用网络里，经网关 /trends/mcp 访问。
+    networks:
+      - agent-tools
+
+networks:
+  agent-tools:
+    external: true
+    name: agent-tools-internal
