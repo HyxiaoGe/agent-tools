@@ -38,9 +38,15 @@ def _configure_logging() -> None:
     logger.propagate = False
 
 
+# 各服务的健康检查：search / reader 只在专用网络里，监控只能经网关探测。
+_HEALTH_PATHS = {"image": "v1/health", "search": "health", "reader": "health"}
+
+
 def _is_public(service: str, path: str, method: str) -> bool:
+    if method not in {"GET", "HEAD"}:
+        return False
     # 生图结果图片本身就是公开地址（返回给前端直接加载），调用方按同一入口下载时不需要密钥。
-    return service == "image" and method in {"GET", "HEAD"} and path.startswith("static/")
+    return (service == "image" and path.startswith("static/")) or _HEALTH_PATHS.get(service) == path
 
 
 def _has_dot_segment(path: str) -> bool:

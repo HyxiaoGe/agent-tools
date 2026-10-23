@@ -4,10 +4,12 @@
 
 | 目录 | 服务 | dev 端口 | 说明 |
 |---|---|---|---|
-| `gateway` | agent-tools-gateway | 8100（仅本机；middleware_default 内按容器名访问） | 统一入口：产品密钥鉴权、调用记账、`/image` `/search` `/reader` 转发 |
+| `gateway` | agent-tools-gateway | 8100（仅本机；middleware_default 内按容器名访问；外部经 `agent-tools.dev.seanfield.org`） | 统一入口：产品密钥鉴权、调用记账、`/image` `/search` `/reader` 转发 |
 | `services/image` | image-service | 8090（host 网络） | 生图 / 改图，REST + MCP，产品密钥鉴权与用量记账 |
-| `services/search` | search-service | 8080（middleware_default） | 多搜索源统一检索 |
-| `services/reader` | reader-service | 8091 | 网页正文读取 |
+| `services/search` | search-service | 8080（仅 agent-tools-internal） | 多搜索源统一检索；自带 `search-redis` 存缓存与 Firecrawl 每日用量 |
+| `services/reader` | reader-service | 8091（仅 agent-tools-internal） | 网页正文读取 |
+
+search / reader 自身不鉴权，只接入专用网络 `agent-tools-internal`（流水线 sync 步骤创建），只有网关能访问；其他容器和监控都经网关。各服务健康检查 `/search/health`、`/reader/health`、`/image/v1/health` 经网关免密钥、不记账。
 
 各服务的开发命令、配置与架构见各自目录下的 README / CLAUDE.md。
 

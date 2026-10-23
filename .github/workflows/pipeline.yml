@@ -153,6 +153,16 @@ jobs:
           git fetch -q origin main
           git checkout -q --detach "$GITHUB_SHA"
           git log --oneline -1
+      - name: Ensure private network
+        run: |
+          set -euo pipefail
+          # search / reader 只在这个网络里；不能用 --internal，它们要访问外网。
+          docker network inspect agent-tools-internal >/dev/null 2>&1 || docker network create agent-tools-internal
+          # 网关先接入，避免 search / reader 先切网络、网关还没部署时转发中断（compose 部署后保持一致）。
+          if docker inspect agent-tools-gateway >/dev/null 2>&1 && \
+             ! docker inspect agent-tools-gateway --format '{{json .NetworkSettings.Networks}}' | grep -q '"agent-tools-internal"'; then
+            docker network connect agent-tools-internal agent-tools-gateway
+          fi
 
   deploy-image:
     needs: [changes, sync]
@@ -222,9 +232,10 @@ jobs:
           docker image prune -f
       - name: Health check
         run: |
+          # reader 不再暴露端口，在容器内检查。
           for i in $(seq 1 15); do
-            if curl -fsS http://localhost:8091/health; then
-              echo; echo "healthy after ${i} attempt(s)"; exit 0
+            if docker exec reader-service python -c "import urllib.request; urllib.request.urlopen('http://localhost:8091/health', timeout=3)"; then
+              echo "healthy after ${i} attempt(s)"; exit 0
             fi
             sleep 2
           done
@@ -232,7 +243,7 @@ jobs:
           docker logs --tail 50 reader-service
           exit 1
       - name: Functional read smoke
-        run: python3 "$DEPLOY_DIR/services/reader/scripts/smoke_read.py"
+        run: docker exec -i reader-service python - < "$DEPLOY_DIR/services/reader/scripts/smoke_read.py"
 
   deploy-gateway:
     needs: [changes, sync, deploy-reader]

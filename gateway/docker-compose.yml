@@ -6,7 +6,8 @@ services:
     env_file: .env
     environment:
       - TZ=Asia/Shanghai
-    # 只在本机暴露，便于部署健康检查；其他容器经 middleware_default 网络按容器名访问。
+    # 只在本机暴露，便于部署健康检查；调用方经 middleware_default 按容器名访问，
+    # search / reader 只在专用网络 agent-tools-internal 里，只有网关能连到。
     ports:
       - "127.0.0.1:8100:8100"
     extra_hosts:
@@ -20,8 +21,12 @@ services:
     restart: unless-stopped
     networks:
       - middleware
+      - agent-tools
 
 networks:
   middleware:
     external: true
     name: middleware_default
+  agent-tools:
+    external: true
+    name: agent-tools-internal

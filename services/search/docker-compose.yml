@@ -4,6 +4,9 @@ services:
     build: .
     container_name: search-service
     env_file: .env
+    environment:
+      # search 自己的 redis（缓存 + Firecrawl 每日用量计数），不再用共享的 middleware-redis。
+      - REDIS_URL=redis://search-redis:6379
     volumes:
       - .:/app
     extra_hosts:
@@ -13,11 +16,31 @@ services:
         limits:
           memory: 256M
     restart: unless-stopped
+    depends_on:
+      - search-redis
     networks:
       - default
-      - middleware
+      - agent-tools
+
+  search-redis:
+    image: redis:7-alpine
+    container_name: search-redis
+    # 用量计数要留存，开 AOF；只在本项目 default 网络内可达。
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "64mb", "--maxmemory-policy", "volatile-lru"]
+    volumes:
+      - search-redis-data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 96M
+    restart: unless-stopped
+    networks:
+      - default
+
+volumes:
+  search-redis-data:
 
 networks:
-  middleware:
+  agent-tools:
     external: true
-    name: middleware_default
+    name: agent-tools-internal

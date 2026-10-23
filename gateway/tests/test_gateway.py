@@ -182,7 +182,7 @@ async def test_image_without_declared_user_sends_no_user_header(client, upstream
     [{"X-Caller-User": "has space"}, {"X-Caller-Scene": "Chat-Image"}, {"X-Request-ID": "x" * 129}],
 )
 async def test_malformed_caller_headers_are_rejected(client, upstreams, header):
-    response = await client.get("/search/health", headers=auth(**header))
+    response = await client.get("/search/usage", headers=auth(**header))
     assert response.status_code == 400
     assert response.json()["error"] == "invalid_caller_header"
     assert upstreams.requests["search"] == []
@@ -271,7 +271,7 @@ def test_products_must_not_share_a_key():
 
 async def test_product_without_a_configured_key_cannot_match(client, monkeypatch):
     monkeypatch.setenv("VALIDATION_SERVICE_KEY", "")
-    response = await client.get("/search/health", headers={"Authorization": "Bearer "})
+    response = await client.get("/search/usage", headers={"Authorization": "Bearer "})
     assert response.status_code == 401
 
 
@@ -311,10 +311,34 @@ async def test_generated_images_are_public_and_not_recorded(client, upstreams, s
 
 
 @pytest.mark.parametrize(
-    ("method", "path"),
-    [("POST", "/image/static/images/a.png"), ("GET", "/search/static/a"), ("GET", "/image/v1/models")],
+    ("service", "path", "upstream_path"),
+    [
+        ("search", "/search/health", "/health"),
+        ("reader", "/reader/health", "/health"),
+        ("image", "/image/v1/health", "/v1/health"),
+    ],
 )
-async def test_only_image_static_reads_skip_the_key(client, method, path):
+async def test_health_checks_are_public_and_not_recorded(client, upstreams, settings, service, path, upstream_path):
+    response = await client.get(path)
+    assert response.status_code == 200
+    (sent,) = upstreams.requests[service]
+    assert sent.url.path == upstream_path
+    assert "authorization" not in sent.headers
+    assert usage_rows(settings) == []
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/image/static/images/a.png"),
+        ("GET", "/search/static/a"),
+        ("GET", "/image/v1/models"),
+        ("POST", "/search/health"),
+        ("GET", "/search/health/x"),
+        ("GET", "/image/health"),
+    ],
+)
+async def test_only_image_static_and_health_reads_skip_the_key(client, method, path):
     response = await client.request(method, path)
     assert response.status_code == 401
 

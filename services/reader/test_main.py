@@ -369,10 +369,10 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
     def test_workflow_runs_real_read_smoke_after_liveness_check(self):
         workflow = PIPELINE_WORKFLOW.read_text()
 
-        smoke_command = 'python3 "$DEPLOY_DIR/services/reader/scripts/smoke_read.py"'
+        smoke_command = 'docker exec -i reader-service python - < "$DEPLOY_DIR/services/reader/scripts/smoke_read.py"'
         self.assertIn(smoke_command, workflow)
         self.assertLess(
-            workflow.index("curl -fsS http://localhost:8091/health"),
+            workflow.index("urlopen('http://localhost:8091/health'"),
             workflow.index(smoke_command),
         )
 

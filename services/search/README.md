@@ -96,7 +96,7 @@ See [.env.example](.env.example) for all available options.
 | `FIRECRAWL_API_URL` | `https://api.firecrawl.dev` | Firecrawl API base URL |
 | `DEEPSEEK_API_KEY` | — | DeepSeek Search API key |
 | `DEEPSEEK_API_URL` | `https://api.deepseek.com` | DeepSeek API base URL |
-| `REDIS_URL` | `redis://redis:6379` | Redis connection URL |
+| `REDIS_URL` | `redis://search-redis:6379` | Redis connection URL (docker compose pins it to the bundled search-redis) |
 | `CACHE_TTL_WEB` | `600` | Web search cache TTL (seconds) |
 | `CACHE_TTL_NEWS` | `300` | News search cache TTL (seconds) |
 | `RATE_LIMIT_GLOBAL` | `40/second` | Global rate limit |
