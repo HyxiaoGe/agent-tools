@@ -93,7 +93,7 @@ curl -s http://localhost:8090/v1/generate \
 }
 ```
 
-REST 返回的 `image_url` 是相对路径，拼上服务地址即可访问；MCP 返回的已经是完整 URL。REST 和 MCP 均须携带产品服务密钥；产品身份不由工具参数决定。其他常用参数：`model`、`quality`、`size`、`style`、`fallback_model`、`grounding`、`reference_images`、`reference_subject`、`no_cache`，完整说明见 `/docs`（FastAPI 自动生成）。
+REST 返回的 `image_url` 是相对路径，拼上服务地址即可访问；MCP 返回的已经是完整 URL。REST 和 MCP 均须携带产品服务密钥；产品身份不由工具参数决定。其他常用参数：`model`、`quality`、`size`、`style`、`optimize_prompt_options`、`fallback_model`、`grounding`、`reference_images`、`reference_subject`、`no_cache`，完整说明见 `/docs`（FastAPI 自动生成）。
 
 ### 按画质偏好选择模型
 
@@ -110,6 +110,29 @@ REST 和 MCP `generate_image` 都支持可选的 `quality`，由调用方根据�
 例如：`{"prompt":"制作一张咖啡活动海报","quality":"high","aspect_ratio":"3:4","size":"1536x1536"}`。
 
 现有备用规则继续生效：`high` 不保证最终一定由 Pro 出图；需要严格指定模型时可同时传 `fallback_model="none"`。返回的 `requested_model` 是解析后的初始模型，`model` 是实际出图模型。日志 `quality` 与 `model_source`（`model` / `quality` / `default`）记录选择依据；缓存按解析后的模型区分，同一模型的等价请求共享缓存。
+
+### Seedream 提示词优化
+
+REST 和 MCP 均接受 `optimize_prompt_options` 对象，字段与[方舟图片生成 API](https://docs.volcengine.com/docs/ark/image-generation-api?lang=zh)一致：
+
+| 配置 | 行为 |
+|---|---|
+| 省略、`null`、`{}` 或 `{"mode":"standard"}` | 标准模式，优先质量；省略或 `null` 时不向上游传该参数 |
+| `{"mode":"fast"}` | 快速模式，缩短耗时，效果略低于标准模式 |
+
+`fast` 支持 Seedream 5.0 Pro 和实际上游为 Seedream 4.0 的请求；Flash、Lite、4.5 不支持。4.x 别名的能力按 `ARK_MODEL_ID` 判断，目前默认指向 4.5，因此 `model="doubao-seedream-4-0"` 本身不代表能用 `fast`。非 Seedream 初始模型不接受这个配置；不兼容的初始模型或非法配置返回 `invalid_params`（REST HTTP 422）。
+
+例如：
+
+```json
+{
+  "prompt": "制作一张咖啡活动海报",
+  "quality": "high",
+  "optimize_prompt_options": {"mode": "fast"}
+}
+```
+
+该参数不改变模型选择，默认 Flash 如需用 `fast`，应同时指定 `quality="high"` 或兼容的 `model`。备用链仍正常执行：不支持 `fast` 的 Seedream 备用模型省略该参数，Gemini / Qwen 备用模型不接收该参数，均采用各自默认行为。需严格保留快速模式和模型时设置 `fallback_model="none"`。`fast` 使用独立缓存；标准模式与省略参数共享缓存。升级后 MCP 调用方需重新获取 `tools/list`。
 
 **本地开发**
 

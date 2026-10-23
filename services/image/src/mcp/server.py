@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from src import __version__
 from src.config import SUPPORTED_MODELS, Settings
 from src.models.errors import ERROR_SPECS, ErrorCode, validation_error_fields
-from src.models.request import GenerateRequest, ImageQuality
+from src.models.request import GenerateRequest, ImageQuality, OptimizePromptOptions
 from src.services.cache import CacheService
 from src.services.generator import GenerationError, handle_generate
 
@@ -79,6 +79,7 @@ async def generate_image(
     reference_subject: str | None = None,
     no_cache: bool = False,
     quality: ImageQuality | None = None,
+    optimize_prompt_options: OptimizePromptOptions | None = None,
 ) -> ToolResult:
     """Generate a new image or edit an existing image using reference_images.
 
@@ -142,6 +143,13 @@ async def generate_image(
             separately with size. Text or reference images alone do not require
             high. Existing fallback rules apply; the result reports the actual
             model. Lite remains available through an explicit model ID.
+        optimize_prompt_options: Seedream prompt optimization, e.g. {"mode": "fast"}.
+            Omit or use {"mode": "standard"} for the upstream default favoring quality.
+            fast favors latency and requires Seedream 5.0 Pro or an actual 4.0
+            upstream model. Flash, Lite and 4.5 do not support fast. Incompatible
+            initial models are rejected; unsupported fallback models use their
+            default optimization behavior. This does not select a model; use
+            quality='high' or an explicit compatible model for fast.
 
     On failure the text starts with "Error generating image [<code>]:" and the
     structured content is {"ok": false, "error": {"code", "message", "retryable", ...}}.
@@ -161,6 +169,7 @@ async def generate_image(
             prompt=prompt,
             model=model,
             quality=quality,
+            optimize_prompt_options=optimize_prompt_options,
             aspect_ratio=aspect_ratio,
             size=size,
             style=style,
