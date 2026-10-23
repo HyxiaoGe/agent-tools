@@ -101,12 +101,20 @@ jobs:
     defaults:
       run:
         working-directory: services/image
+    env:
+      # 和 check-gateway 一样用 dev 系统自带的 Python 3.12，不下载解释器。
+      UV_PYTHON: /usr/bin/python3
+      UV_PYTHON_DOWNLOADS: never
     steps:
       - uses: actions/checkout@v4
       - name: Ruff lint
         run: ~/.local/bin/ruff check .
       - name: Architecture check
         run: python3 scripts/check_architecture.py
+      - name: Install dependencies
+        run: ~/.local/bin/uv sync --frozen --extra dev
+      - name: Tests
+        run: ~/.local/bin/uv run --frozen pytest -q
 
   check-search:
     needs: changes
@@ -115,12 +123,20 @@ jobs:
     defaults:
       run:
         working-directory: services/search
+    env:
+      # 和 check-gateway 一样用 dev 系统自带的 Python 3.12，不下载解释器。
+      UV_PYTHON: /usr/bin/python3
+      UV_PYTHON_DOWNLOADS: never
     steps:
       - uses: actions/checkout@v4
       - name: Architecture check
         run: python3 scripts/check_architecture.py
       - name: Ruff lint
         run: ~/.local/bin/ruff check .
+      - name: Install dependencies
+        run: ~/.local/bin/uv sync --frozen
+      - name: Tests
+        run: ~/.local/bin/uv run --frozen pytest -q
 
   check-reader:
     needs: changes
