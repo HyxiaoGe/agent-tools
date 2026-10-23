@@ -2,7 +2,8 @@ name: reader-service
 services:
   reader-service:
     build: .
-    image: reader-service
+    # dev 部署时由 deploy-from-acr.sh 传入 ACR 镜像；未传时用当前已部署的版本，本地开发会按 build 构建。
+    image: ${AGENT_TOOLS_IMAGE:-agent-tools/reader:current}
     container_name: reader-service
     env_file: .env
     # 不对外暴露端口：只有 agent-tools 网关经专用网络访问。
