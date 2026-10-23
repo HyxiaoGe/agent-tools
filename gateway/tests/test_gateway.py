@@ -4,11 +4,13 @@ import json
 import sqlite3
 from collections.abc import Callable
 
+import anyio
 import httpx
 import pytest
 
 from app.config import ProductConfig, Settings
 from app.main import create_app
+from app.usage import UsageStore
 from app.usage_report import summarize
 
 FUSION_KEY = "fusion-test-key"
@@ -317,17 +319,27 @@ async def test_only_image_static_reads_skip_the_key(client, method, path):
     assert response.status_code == 401
 
 
-@pytest.mark.parametrize("path", ["/image/static/../mcp", "/image/static/./x", "/search/a/../b"])
-async def test_dot_segments_are_rejected(settings, upstreams, path):
-    # httpx 客户端会规范化路径，uvicorn 不会；直接按 ASGI 送原始路径模拟恶意请求。
-    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader")})
+async def call_asgi(app, path: str, *, headers: list[tuple[bytes, bytes]] = (), disconnect_after_body: bool = False):
+    """按 ASGI 直接调用：路径不经 httpx 规范化；可模拟调用方收齐响应后立即断开连接。"""
     sent: list[dict] = []
+    body_sent = anyio.Event()
+    request_delivered = False
 
     async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+        nonlocal request_delivered
+        if not request_delivered:
+            request_delivered = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        if disconnect_after_body:
+            await body_sent.wait()
+        else:
+            await anyio.sleep_forever()
+        return {"type": "http.disconnect"}
 
     async def send(message):
         sent.append(message)
+        if message["type"] == "http.response.body" and message.get("body"):
+            body_sent.set()
 
     scope = {
         "type": "http",
@@ -338,12 +350,54 @@ async def test_dot_segments_are_rejected(settings, upstreams, path):
         "path": path,
         "raw_path": path.encode(),
         "query_string": b"",
-        "headers": [],
+        "headers": list(headers),
         "client": ("127.0.0.1", 1),
         "server": ("gateway", 80),
     }
+    await app(scope, receive, send)
+    return sent
+
+
+@pytest.mark.parametrize("path", ["/image/static/../mcp", "/image/static/./x", "/search/a/../b"])
+async def test_dot_segments_are_rejected(settings, upstreams, path):
+    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader")})
     async with app.router.lifespan_context(app):
-        await app(scope, receive, send)
+        sent = await call_asgi(app, path)
     assert sent[0]["status"] == 400
     assert json.loads(sent[1]["body"])["error"] == "invalid_path"
     assert upstreams.requests["image"] == upstreams.requests["search"] == []
+
+
+class SlowClosingStream(httpx.AsyncByteStream):
+    """上游连接关闭要花一点时间（真实网络下的 aclose 会让出事件循环）。"""
+
+    def __init__(self, content: bytes):
+        self.content = content
+
+    async def __aiter__(self):
+        yield self.content
+
+    async def aclose(self) -> None:
+        await anyio.sleep(0.05)
+
+
+async def test_usage_is_recorded_when_caller_disconnects_after_full_response(settings, upstreams, monkeypatch):
+    # curl 等调用方按 content-length 收齐响应就断开；断开会取消请求任务，收尾与记账不能跟着被取消。
+    # 线程池繁忙时记账任务要排队，这期间到达的取消会把还没开始执行的任务直接撤掉。
+    record_sync = UsageStore.record_sync
+
+    async def queued_record(self, record):
+        await anyio.sleep(0.01)
+        record_sync(self, record)
+
+    monkeypatch.setattr(UsageStore, "record", queued_record)
+    upstreams.handlers["image"] = lambda request: httpx.Response(
+        404, headers={"content-length": "9"}, stream=SlowClosingStream(b"Not Found")
+    )
+    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader")})
+    headers = [(b"authorization", f"Bearer {FUSION_KEY}".encode()), (b"x-caller-scene", b"smoke_test")]
+    async with app.router.lifespan_context(app):
+        sent = await call_asgi(app, "/image/health", headers=headers, disconnect_after_body=True)
+    assert sent[0]["status"] == 404
+    (row,) = usage_rows(settings)
+    assert (row["service"], row["path"], row["status"], row["scene"]) == ("image", "/health", 404, "smoke_test")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 
+import anyio
 import httpx
 from starlette.datastructures import Headers
 from starlette.requests import Request
@@ -171,8 +172,11 @@ async def forward(
             outcome = "unreachable"
             raise
         finally:
-            await upstream_response.aclose()
-            await finish(upstream_response.status_code, outcome)
+            # 调用方收齐响应就断开时，Starlette 会取消整个请求任务；收尾和记账要屏蔽取消，
+            # 否则还在线程池排队的记账会被直接撤掉，也不会留下任何报错。
+            with anyio.CancelScope(shield=True):
+                await upstream_response.aclose()
+                await finish(upstream_response.status_code, outcome)
 
     return StreamingResponse(
         body_stream(),
