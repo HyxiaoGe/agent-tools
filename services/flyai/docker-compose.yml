@@ -17,12 +17,13 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    pids_limit: 64
-    cpus: 0.5
+    # 资源上限统一写在 deploy.resources.limits：compose 不接受与顶层 cpus / pids_limit 混用。
     deploy:
       resources:
         limits:
+          cpus: "0.5"
           memory: 256M
+          pids: 64
     restart: unless-stopped
     # 自身无鉴权，只在专用网络里，经网关 /flyai 访问；CLI 要访问公网的 FlyAI，网络不能是 internal。
     networks:
