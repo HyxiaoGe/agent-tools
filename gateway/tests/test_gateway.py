@@ -13,7 +13,7 @@ from app.main import create_app
 from app.usage import UsageRecord, UsageStore, now_iso
 from app.usage_report import summarize
 
-SERVICES = ("image", "search", "reader", "trends", "amap", "context7")
+SERVICES = ("image", "search", "reader", "trends", "amap", "context7", "weather")
 FUSION_KEY = "fusion-test-key"
 VALIDATION_KEY = "validation-test-key"
 
@@ -379,6 +379,9 @@ async def test_paid_services_are_not_allowed_by_default(client, upstreams):
     response = await client.post("/context7/mcp", content=b"{}", headers=auth())
     assert response.status_code == 403
     assert upstreams.requests["context7"] == []
+    response = await client.get("/weather/v1/cities?location=x", headers=auth())
+    assert response.status_code == 403
+    assert upstreams.requests["weather"] == []
 
 
 async def test_products_only_reach_their_allowed_services(settings, upstreams):
@@ -406,7 +409,7 @@ def test_product_services_must_be_known():
     with pytest.raises(ValueError, match="unknown services"):
         Settings(
             _env_file=None,
-            products={"fusion": ProductConfig(service_key_env="FUSION_SERVICE_KEY", services=["search", "weather"])},
+            products={"fusion": ProductConfig(service_key_env="FUSION_SERVICE_KEY", services=["search", "flights"])},
         )
 
 
@@ -432,6 +435,7 @@ async def test_generated_images_are_public_and_not_recorded(client, upstreams, s
         ("image", "/image/v1/health", "/v1/health"),
         ("amap", "/amap/health", "/health"),
         ("context7", "/context7/health", "/health"),
+        ("weather", "/weather/health", "/health"),
     ],
 )
 async def test_health_checks_are_public_and_not_recorded(client, upstreams, settings, service, path, upstream_path):

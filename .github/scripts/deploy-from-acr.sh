@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# 用法：deploy-from-acr.sh <gateway|image|search|reader|trends|amap|context7>
+# 用法：deploy-from-acr.sh <gateway|image|search|reader|trends|amap|context7|weather>
 # 从 ACR 拉本次提交在 Windows 上构建的镜像，用 compose 重建对应容器。
 set -euo pipefail
 
 service="${1:?缺少服务名}"
 case "$service" in
   gateway) dir="$DEPLOY_DIR/gateway" ;;
-  image | search | reader | trends | amap | context7) dir="$DEPLOY_DIR/services/$service" ;;
+  image | search | reader | trends | amap | context7 | weather) dir="$DEPLOY_DIR/services/$service" ;;
   *) echo "未知服务：$service" >&2; exit 1 ;;
 esac
 : "${REGISTRY:?}" "${IMAGE_PREFIX:?}" "${GITHUB_SHA:?}" "${ACR_USERNAME:?}" "${ACR_PASSWORD:?}"

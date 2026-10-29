@@ -1,0 +1,28 @@
+[project]
+name = "agent-tools-weather"
+version = "0.1.0"
+description = "和风天气的只读代理：服务端持有 Ed25519 凭证签 JWT，提供城市查询与逐日 / 逐小时预报"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
+    "httpx>=0.28.0",
+    "cryptography>=43.0.0",
+    "pydantic-settings>=2.6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "anyio>=4.0.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
