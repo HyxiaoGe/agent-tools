@@ -10,12 +10,12 @@ from fastapi import FastAPI
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from app.auth import AuthError, authenticate
+from app.auth import AuthError, authenticate, authorize_service
 from app.config import Settings, Upstream
-from app.proxy import forward
+from app.proxy import forward, mcp_tool_name
 from app.usage import UsageStore
 
-_LOG_FIELDS = ("service", "app_id", "path", "status", "outcome", "duration_ms", "request_id")
+_LOG_FIELDS = ("service", "app_id", "path", "tool", "status", "outcome", "duration_ms", "request_id")
 
 
 class _JsonFormatter(logging.Formatter):
@@ -40,6 +40,7 @@ def _configure_logging() -> None:
 
 # 各服务的健康检查：search / reader 只在专用网络里，监控只能经网关探测。
 _HEALTH_PATHS = {"image": "v1/health", "search": "health", "reader": "health"}
+logger = logging.getLogger("gateway")
 
 
 def _is_public(service: str, path: str, method: str) -> bool:
@@ -102,7 +103,11 @@ def create_app(
             return JSONResponse({"error": "invalid_path", "message": "Path must not contain dot segments."}, 400)
         try:
             caller = None if _is_public(service, path, request.method) else authenticate(settings, request.headers)
+            if caller is not None:
+                authorize_service(settings, caller, service)
         except AuthError as exc:
+            if exc.status_code == 403:
+                logger.warning("service_not_allowed", extra={"service": service, "app_id": caller.app_id})
             headers = {"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None
             return JSONResponse(
                 {"error": exc.code, "message": exc.message}, status_code=exc.status_code, headers=headers
@@ -122,6 +127,7 @@ def create_app(
             client=request.app.state.clients[service],
             caller=caller,
             body=bytes(body),
+            tool=mcp_tool_name(path, bytes(body)),
             usage=request.app.state.usage,
         )
 

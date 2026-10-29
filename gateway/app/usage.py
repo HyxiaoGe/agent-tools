@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS requests (
     service TEXT NOT NULL,
     method TEXT NOT NULL,
     path TEXT NOT NULL,
+    tool TEXT,
     status INTEGER NOT NULL,
     outcome TEXT NOT NULL,
     duration_ms INTEGER NOT NULL
@@ -37,6 +38,8 @@ class UsageRecord:
     service: str
     method: str
     path: str
+    # MCP 调用的工具名（tools/call 的 params.name）；REST 请求和其他 MCP 消息为空。
+    tool: str | None
     status: int
     # ok：上游返回了响应（含 4xx/5xx）；busy / timeout / unreachable：网关自身判定的失败。
     outcome: str
@@ -51,15 +54,23 @@ class UsageStore:
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._lock = threading.Lock()
         self._retention = timedelta(days=retention_days)
         self._last_prune: datetime | None = None
 
+    def _migrate(self) -> None:
+        # 早期的表没有 tool 列；CREATE TABLE IF NOT EXISTS 不会补列，这里按列名补齐。
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(requests)")}
+        if "tool" not in columns:
+            self._conn.execute("ALTER TABLE requests ADD COLUMN tool TEXT")
+            self._conn.commit()
+
     def record_sync(self, record: UsageRecord) -> None:
         with self._lock:
             self._conn.execute(
-                "INSERT INTO requests (ts, app_id, user_id, scene, request_id, service, method, path, status, "
-                "outcome, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO requests (ts, app_id, user_id, scene, request_id, service, method, path, tool, status, "
+                "outcome, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 astuple(record),
             )
             now = datetime.now(UTC)
