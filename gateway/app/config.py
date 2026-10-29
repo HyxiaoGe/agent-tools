@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     amap_upstream: str = "http://amap-mcp:3334"
     # Context7 官方 MCP 的代理（注入密钥、文档工具白名单），密钥按账号限流，不在产品默认放行列表里。
     context7_upstream: str = "http://context7-mcp:3335"
+    # 和风天气的只读代理（持有凭证签 JWT、字段归一），按项目计费，不在产品默认放行列表里。
+    weather_upstream: str = "http://weather-service:8092"
 
     # 超时要大于调用方自己的超时，由调用方决定放弃；image-service 内部总预算 135s。
     image_timeout_seconds: float = 180
@@ -53,6 +55,8 @@ class Settings(BaseSettings):
     amap_timeout_seconds: float = 60
     # Context7 上游常见 5–20s，代理自身 45s 放弃，这里再留余量。
     context7_timeout_seconds: float = 90
+    # 代理单次上游 8s，一次工具调用最多两次串行请求，再留余量。
+    weather_timeout_seconds: float = 30
 
     # 按服务分开的连接池：某个服务堆积慢请求时只占满自己的池，不拖住其他服务。
     image_max_connections: int = 16
@@ -61,6 +65,7 @@ class Settings(BaseSettings):
     trends_max_connections: int = 16
     amap_max_connections: int = 16
     context7_max_connections: int = 16
+    weather_max_connections: int = 16
     # 池满时排队等待的上限，超过即返回 503。
     pool_wait_seconds: float = 5
 
@@ -99,4 +104,5 @@ class Settings(BaseSettings):
             "context7": Upstream(
                 "context7", s.context7_upstream, s.context7_timeout_seconds, s.context7_max_connections
             ),
+            "weather": Upstream("weather", s.weather_upstream, s.weather_timeout_seconds, s.weather_max_connections),
         }

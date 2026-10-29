@@ -4,15 +4,16 @@
 
 | 目录 | 服务 | dev 端口 | 说明 |
 |---|---|---|---|
-| `gateway` | agent-tools-gateway | 8100（仅本机；middleware_default 内按容器名访问；外部经 `agent-tools.dev.seanfield.org`） | 统一入口：产品密钥鉴权、调用记账、`/image` `/search` `/reader` `/trends` `/amap` `/context7` 转发 |
+| `gateway` | agent-tools-gateway | 8100（仅本机；middleware_default 内按容器名访问；外部经 `agent-tools.dev.seanfield.org`） | 统一入口：产品密钥鉴权、调用记账、`/image` `/search` `/reader` `/trends` `/amap` `/context7` `/weather` 转发 |
 | `services/image` | image-service | 8090（host 网络） | 生图 / 改图，REST + MCP，产品密钥鉴权与用量记账 |
 | `services/search` | search-service | 8080（仅 agent-tools-internal） | 多搜索源统一检索；自带 `search-redis` 存缓存与 Firecrawl 每日用量 |
 | `services/reader` | reader-service | 8091（仅 agent-tools-internal） | 网页正文读取 |
 | `services/trends` | trends-mcp | 3333（仅 agent-tools-internal） | TrendRadar 热榜 MCP（官方镜像转存，只读 dev 上 TrendRadar 的数据） |
 | `services/amap` | amap-mcp | 3334（仅 agent-tools-internal） | 高德官方 MCP 的代理：注入密钥、只读白名单、配额用尽标记；付费服务，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
 | `services/context7` | context7-mcp | 3335（仅 agent-tools-internal） | Context7 官方 MCP 的代理：注入密钥、文档工具白名单、限流标记；密钥按账号限流，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
+| `services/weather` | weather-service | 8092（仅 agent-tools-internal） | 和风天气的只读代理：持有 Ed25519 凭证签 JWT、城市查询与逐日 / 逐小时预报、字段归一；按项目计费，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
 
-search / reader / trends / amap / context7 自身不鉴权，只接入专用网络 `agent-tools-internal`（流水线 sync 步骤创建），只有网关能访问；其他容器和监控都经网关。各服务健康检查 `/search/health`、`/reader/health`、`/image/v1/health`、`/amap/health`、`/context7/health` 经网关免密钥、不记账。
+search / reader / trends / amap / context7 / weather 自身不鉴权，只接入专用网络 `agent-tools-internal`（流水线 sync 步骤创建），只有网关能访问；其他容器和监控都经网关。各服务健康检查 `/search/health`、`/reader/health`、`/image/v1/health`、`/amap/health`、`/context7/health`、`/weather/health` 经网关免密钥、不记账。
 
 ## 流水线
 
@@ -27,7 +28,7 @@ search / reader / trends / amap / context7 自身不鉴权，只接入专用网�
 手动重新部署（例如改了 dev 上的 `.env`）：
 
 ```bash
-gh workflow run pipeline.yml -R HyxiaoGe/agent-tools -f service=<all|gateway|image|search|reader|trends|amap|context7>
+gh workflow run pipeline.yml -R HyxiaoGe/agent-tools -f service=<all|gateway|image|search|reader|trends|amap|context7|weather>
 ```
 
 dev 上每个服务的 `.env` 放在部署目录对应的 `services/<name>/.env`（网关是 `gateway/.env`），不入库；生图结果与用量库在 `services/image/storage`，网关用量库在 `gateway/storage`。
