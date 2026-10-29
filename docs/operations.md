@@ -20,7 +20,7 @@ search / reader / trends / amap / context7 / weather / flyai 自身不鉴权，�
 
 `.github/workflows/pipeline.yml`：PR 和 push `main` 时只在 dev 上检查有改动的服务；合入 `main` 后：
 
-1. Windows 构建机（runner 标签 `agent-tools-build`）用 `docker buildx bake` 并行构建有改动的服务镜像并推到 ACR `seanfield/agent-tools-<服务>:<提交 SHA>`（`.github/scripts/windows-publish.ps1`；pip 走阿里云镜像源且不经代理）。
+1. Windows 构建机（runner 标签 `agent-tools-build`）用 `docker buildx bake` 并行构建有改动的服务镜像并推到 ACR `seanfield/agent-tools-<服务>:<提交 SHA>`（`.github/scripts/windows-publish.ps1`；构建容器直连外网，实测比走代理或国内镜像源快）。
 2. dev 上的部署目录 `~/project/agent-tools` 切到本次提交（compose 文件与 `.env`）。
 3. dev 并行拉镜像部署各服务（`.github/scripts/deploy-from-acr.sh`），网关最后部署；镜像标成 `agent-tools/<服务>:current`，在 dev 上手动 `docker compose up -d` 时沿用这个版本，不会重新构建。
 
