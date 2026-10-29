@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -171,3 +172,33 @@ async def test_health_route_is_served_without_mcp_handshake(converter):
             response = await http.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_http_client_loggers_are_quiet_and_key_is_redacted_everywhere():
+    from app.server import HTTP_CLIENT_LOGGERS, RedactKey, _configure_logging
+
+    _configure_logging("secret-key-123")
+    assert {logging.getLogger(name).level for name in HTTP_CLIENT_LOGGERS} == {logging.WARNING}
+    assert "httpx2" in HTTP_CLIENT_LOGGERS
+
+    redact = RedactKey("secret-key-123")
+    record = logging.LogRecord(
+        "httpx2",
+        logging.INFO,
+        __file__,
+        1,
+        'HTTP Request: POST %s "HTTP/1.1 200 OK"',
+        ("https://mcp.amap.com/mcp?key=secret-key-123",),
+        None,
+    )
+    assert redact.filter(record) is True
+    assert "secret-key-123" not in record.getMessage()
+    assert "mcp.amap.com/mcp?key=<redacted>" in record.getMessage()
+
+    # 密钥换了但日志里还有旧的 key= 参数时，也按参数名脱敏。
+    other = logging.LogRecord(
+        "x", logging.INFO, __file__, 1, "GET /convert?locations=1,2&key=another&output=json", None, None
+    )
+    redact.filter(other)
+    assert other.getMessage() == "GET /convert?locations=1,2&key=<redacted>&output=json"
+    assert all(isinstance(f, RedactKey) for f in logging.getLogger().handlers[0].filters)

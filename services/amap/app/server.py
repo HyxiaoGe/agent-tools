@@ -192,18 +192,42 @@ def build_server(
     return proxy
 
 
-def _configure_logging() -> None:
+# fastmcp 的客户端传输用 httpx2（httpx 的分支包），坐标转换用 httpx；两套都会以 INFO 打完整请求地址。
+HTTP_CLIENT_LOGGERS = ("httpx", "httpcore", "httpx2", "httpcore2")
+_KEY_QUERY = re.compile(r"(?i)(\bkey=)[^&\s\"'<>]+")
+
+
+class RedactKey(logging.Filter):
+    """兜底：任何日志里出现密钥本身或 key= 查询参数都替换掉，不依赖各库的日志级别。"""
+
+    def __init__(self, api_key: str):
+        super().__init__()
+        self._api_key = api_key
+
+    def _clean(self, text: str) -> str:
+        if self._api_key:
+            text = text.replace(self._api_key, "<redacted>")
+        return _KEY_QUERY.sub(r"\1<redacted>", text)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = self._clean(record.getMessage())
+        record.args = None
+        return True
+
+
+def _configure_logging(api_key: str) -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
-    # httpx 会以 INFO 打完整请求地址，上游地址里带密钥，不能让它出现在日志里。
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    for name in HTTP_CLIENT_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(RedactKey(api_key))
 
 
 def main() -> None:
-    _configure_logging()
     api_key = os.environ.get("AMAP_API_KEY", "").strip()
     if not api_key:
         raise SystemExit("AMAP_API_KEY is required")
+    _configure_logging(api_key)
     timeout = float(os.environ.get("AMAP_CALL_TIMEOUT_SECONDS", "30"))
     url = os.environ.get("AMAP_MCP_URL", DEFAULT_UPSTREAM_URL)
     server = build_server(
