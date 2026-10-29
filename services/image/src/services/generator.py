@@ -21,7 +21,7 @@ from src.config import SUPPORTED_MODELS, Settings
 from src.models.errors import ERROR_SPECS, ErrorCode
 from src.models.identity import CallerIdentity
 from src.models.lifetime import RequestLifetime
-from src.models.request import MAX_REFERENCE_IMAGES, GenerateRequest
+from src.models.request import MAX_REFERENCE_IMAGES, GenerateRequest, OptimizePromptOptions
 from src.models.response import GenerateResponse, ReferenceSearchInfo
 from src.services.admission import AdmissionError, generation_admission
 from src.services.budget import CLEANUP_TIMEOUT_SECONDS, current_budget, generation_scope
@@ -516,6 +516,13 @@ async def call_gemini(
     raise GenerationError(ErrorCode.NO_IMAGE_RETURNED, upstream_detail=detail)
 
 
+def _supports_fast_prompt(model: str, settings: Settings) -> bool:
+    """按实际上游版本判断；4.0 别名默认也可能指向 4.5。"""
+    info = SUPPORTED_MODELS[model]
+    wire_id = info.ark_model_id or settings.ark_model_id
+    return info.endpoint_type == "images" and wire_id.startswith(("doubao-seedream-5-0-pro-", "doubao-seedream-4-0-"))
+
+
 async def call_seedream_images(
     prompt: str,
     model: str,
@@ -525,6 +532,7 @@ async def call_seedream_images(
     aspect_ratio: str | None = None,
     size: str | None = None,
     reference_images: list[ReferenceImage] | None = None,
+    optimize_prompt_options: OptimizePromptOptions | None = None,
 ) -> tuple[bytes, str]:
     """Call Volcengine Ark for Seedream; return image bytes and detected format."""
     caller = _caller_identity.get()
@@ -551,6 +559,11 @@ async def call_seedream_images(
     }
     if info.sequential_param:
         payload["sequential_image_generation"] = "disabled"
+    if optimize_prompt_options is not None and (
+        optimize_prompt_options.mode == "standard" or _supports_fast_prompt(model, settings)
+    ):
+        # 备用模型不支持 fast 时恢复上游默认行为，避免触发方舟 400。
+        payload["optimize_prompt_options"] = optimize_prompt_options.model_dump()
     if reference_images:
         uris = [ref.data_uri for ref in reference_images]
         payload["image"] = uris[0] if len(uris) == 1 else uris
@@ -843,6 +856,7 @@ async def _handle_generate(
         "entry": entry,
         "requested_model": requested_model,
         "quality": request.quality,
+        "optimize_prompt_mode": request.optimize_prompt_options.mode if request.optimize_prompt_options else None,
         "model_source": model_source,
         "total_budget_seconds": settings.generation_timeout_seconds,
         "stage": "validation",
@@ -881,7 +895,7 @@ async def _handle_generate(
     try:
         try:
             async with generation_scope(settings, lifetime):
-                _validate(request, requested_model)
+                _validate(request, requested_model, settings)
                 fields["stage"] = "admission"
                 try:
                     async with generation_admission(cache.redis, settings, caller):
@@ -960,7 +974,7 @@ def _supports_aspect_ratio(model: str, aspect_ratio: str) -> bool:
     return True
 
 
-def _validate(request: GenerateRequest, model: str) -> None:
+def _validate(request: GenerateRequest, model: str, settings: Settings) -> None:
     """Reject bad model / ratio / fallback before touching the cache or upstream."""
     if model not in SUPPORTED_MODELS:
         raise GenerationError(
@@ -969,6 +983,20 @@ def _validate(request: GenerateRequest, model: str) -> None:
             fields=["model"],
         )
     _check_aspect_ratio(model, request.aspect_ratio, "aspect_ratio")
+    options = request.optimize_prompt_options
+    if options is not None:
+        if SUPPORTED_MODELS[model].endpoint_type != "images":
+            raise GenerationError(
+                ErrorCode.INVALID_PARAMS,
+                "optimize_prompt_options requires a Seedream model.",
+                fields=["optimize_prompt_options"],
+            )
+        if options.mode == "fast" and not _supports_fast_prompt(model, settings):
+            raise GenerationError(
+                ErrorCode.INVALID_PARAMS,
+                "fast prompt optimization requires Seedream 5.0 Pro or an actual Seedream 4.0 upstream model.",
+                fields=["optimize_prompt_options"],
+            )
 
 
 NO_FALLBACK = "none"
@@ -1102,7 +1130,9 @@ async def _invoke_model(
     if endpoint == "dashscope":
         return await call_qwen_images(**kwargs, size=request.size)
     if endpoint == "images":
-        return await call_seedream_images(**kwargs, size=request.size)
+        return await call_seedream_images(
+            **kwargs, size=request.size, optimize_prompt_options=request.optimize_prompt_options
+        )
     return await call_gemini(**kwargs, search_types=SUPPORTED_MODELS[model].search_types if request.grounding else ())
 
 
@@ -1242,7 +1272,8 @@ async def _generate(
     http_client: httpx.AsyncClient | None,
 ) -> GenerateResponse:
     """Orchestrate generation: validate → cache check → generate (with fallback) → save → cache set."""
-    _validate(request, model)
+    _validate(request, model, settings)
+    options = request.optimize_prompt_options
     _log_fields.get()["stage"] = "cache"
     fallbacks, fallback_source = _resolve_fallback(request, model, settings)
     # One model logs and keys exactly as before the chain existed.
@@ -1260,6 +1291,7 @@ async def _generate(
         request.reference_images,
         request.reference_subject,
         namespace=_caller_identity.get().app_id,
+        optimize_prompt_mode=options.mode if options is not None else None,
     )
 
     lock_token: str | None = None

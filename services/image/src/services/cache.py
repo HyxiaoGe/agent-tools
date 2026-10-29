@@ -33,6 +33,7 @@ def compute_cache_key(
     reference_subject: str | None = None,
     *,
     namespace: str | None = None,
+    optimize_prompt_mode: str | None = None,
 ) -> str:
     """Compute SHA-256 cache key from normalized generation parameters.
 
@@ -52,6 +53,9 @@ def compute_cache_key(
         raw += ":seedream-size=v1"
     if grounding:
         raw += ":grounding"
+    # standard 与省略参数等价；fast 的结果和锁必须独立。
+    if optimize_prompt_mode == "fast":
+        raw += ":optimize-prompt=fast"
     if reference_images:
         # Keyed by URL, not content: a URL whose image changes keeps serving the
         # cached result until TTL or no_cache.
