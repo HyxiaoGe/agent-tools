@@ -301,9 +301,7 @@ jobs:
         env:
           HTTP_PROXY: http://127.0.0.1:7897
           HTTPS_PROXY: http://127.0.0.1:7897
-          # pip 走阿里云 PyPI 镜像且不经代理：经代理下载 PyPI 包时常被截断，报 hash 不匹配后重试。
-          NO_PROXY: localhost,127.0.0.1,::1,mirrors.aliyun.com
-          PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
+          NO_PROXY: localhost,127.0.0.1,::1
         timeout-minutes: 30
         run: |
           & ".github/scripts/windows-publish.ps1" -Services "${env:SERVICES}" -ImagePrefix "${env:IMAGE_PREFIX}" -ImageTag "${env:GITHUB_SHA}"

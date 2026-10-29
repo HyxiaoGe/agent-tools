@@ -24,12 +24,12 @@ foreach ($service in $selected) {
     if (-not $contexts.ContainsKey($service)) { throw "未知服务：$service" }
 }
 
-# 代理与 PyPI 镜像源以 build-arg 传入：bake 不会像 docker build 那样自动带上代理环境变量。
+# 构建容器直连外网，与原先 docker build 一致。不要把宿主机代理（127.0.0.1:7897）当 build-arg 传进去：
+# 容器里的 127.0.0.1 不是宿主机，uv / pip 会报 tunnel error。实测 PyPI 走阿里云镜像比直连官方源慢得多，
+# 所以默认也不改源；需要时在作业环境设 PIP_INDEX_URL，这里原样传给 Dockerfile 的同名 ARG。
 $buildArgs = @{}
-foreach ($name in @("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "PIP_INDEX_URL")) {
-    $value = [Environment]::GetEnvironmentVariable($name)
-    if ($value) { $buildArgs[$name] = $value }
-}
+$pipIndexUrl = [Environment]::GetEnvironmentVariable("PIP_INDEX_URL")
+if ($pipIndexUrl) { $buildArgs["PIP_INDEX_URL"] = $pipIndexUrl }
 
 $targets = @{}
 foreach ($service in $selected) {
