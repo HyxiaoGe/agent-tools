@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     context7_upstream: str = "http://context7-mcp:3335"
     # 和风天气的只读代理（持有凭证签 JWT、字段归一），按项目计费，不在产品默认放行列表里。
     weather_upstream: str = "http://weather-service:8092"
+    flyai_upstream: str = "http://flyai-adapter:8093"
 
     # 超时要大于调用方自己的超时，由调用方决定放弃；image-service 内部总预算 135s。
     image_timeout_seconds: float = 180
@@ -57,6 +58,8 @@ class Settings(BaseSettings):
     context7_timeout_seconds: float = 90
     # 代理单次上游 8s，一次工具调用最多两次串行请求，再留余量。
     weather_timeout_seconds: float = 30
+    # FlyAI 适配器自身给供应商 CLI 20 秒，再留排队与传输余量。
+    flyai_timeout_seconds: float = 30
 
     # 按服务分开的连接池：某个服务堆积慢请求时只占满自己的池，不拖住其他服务。
     image_max_connections: int = 16
@@ -66,6 +69,7 @@ class Settings(BaseSettings):
     amap_max_connections: int = 16
     context7_max_connections: int = 16
     weather_max_connections: int = 16
+    flyai_max_connections: int = 8
     # 池满时排队等待的上限，超过即返回 503。
     pool_wait_seconds: float = 5
 
@@ -105,4 +109,5 @@ class Settings(BaseSettings):
                 "context7", s.context7_upstream, s.context7_timeout_seconds, s.context7_max_connections
             ),
             "weather": Upstream("weather", s.weather_upstream, s.weather_timeout_seconds, s.weather_max_connections),
+            "flyai": Upstream("flyai", s.flyai_upstream, s.flyai_timeout_seconds, s.flyai_max_connections),
         }

@@ -1,0 +1,34 @@
+name: flyai
+services:
+  flyai-adapter:
+    build: .
+    # dev 部署时由 deploy-from-acr.sh 传入 ACR 镜像；未传时用当前已部署的版本，本地开发会按 build 构建。
+    image: ${AGENT_TOOLS_IMAGE:-agent-tools/flyai:current}
+    container_name: flyai-adapter
+    env_file: .env
+    environment:
+      - TZ=Asia/Shanghai
+      - PORT=8093
+    # 第三方 CLI 在容器内以子进程运行：只读根文件系统、临时目录 noexec、不保留任何 capability。
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    cpus: 0.5
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    restart: unless-stopped
+    # 自身无鉴权，只在专用网络里，经网关 /flyai 访问；CLI 要访问公网的 FlyAI，网络不能是 internal。
+    networks:
+      - agent-tools
+
+networks:
+  agent-tools:
+    external: true
+    name: agent-tools-internal

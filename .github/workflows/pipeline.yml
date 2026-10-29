@@ -9,7 +9,7 @@ on:
       service:
         description: 要重新部署的服务
         type: choice
-        options: [all, gateway, image, search, reader, trends, amap, context7, weather]
+        options: [all, gateway, image, search, reader, trends, amap, context7, weather, flyai]
         default: all
 
 permissions:
@@ -37,6 +37,7 @@ jobs:
       amap: ${{ steps.detect.outputs.amap }}
       context7: ${{ steps.detect.outputs.context7 }}
       weather: ${{ steps.detect.outputs.weather }}
+      flyai: ${{ steps.detect.outputs.flyai }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,7 +50,7 @@ jobs:
           REQUESTED: ${{ inputs.service }}
         run: |
           set -euo pipefail
-          services="gateway image search reader trends amap context7 weather"
+          services="gateway image search reader trends amap context7 weather flyai"
           if [ "$EVENT" = "workflow_dispatch" ]; then
             for s in $services; do
               if [ "$REQUESTED" = "all" ] || [ "$REQUESTED" = "$s" ]; then v=true; else v=false; fi
@@ -161,6 +162,20 @@ jobs:
       - name: Tests
         run: ~/.local/bin/uv run --frozen pytest -q
 
+  check-flyai:
+    needs: changes
+    if: needs.changes.outputs.flyai == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    defaults:
+      run:
+        working-directory: services/flyai
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Tests
+        run: npm test
+
   check-image:
     needs: changes
     if: needs.changes.outputs.image == 'true'
@@ -224,7 +239,7 @@ jobs:
         run: python -m unittest -v test_main
 
   publish:
-    needs: [changes, check-gateway, check-image, check-search, check-reader, check-amap, check-context7, check-weather]
+    needs: [changes, check-gateway, check-image, check-search, check-reader, check-amap, check-context7, check-weather, check-flyai]
     if: >-
       always() && github.event_name != 'pull_request' &&
       github.ref == 'refs/heads/main' &&
@@ -232,7 +247,8 @@ jobs:
       (needs.changes.outputs.gateway == 'true' || needs.changes.outputs.image == 'true' ||
        needs.changes.outputs.search == 'true' || needs.changes.outputs.reader == 'true' ||
        needs.changes.outputs.trends == 'true' || needs.changes.outputs.amap == 'true' ||
-       needs.changes.outputs.context7 == 'true' || needs.changes.outputs.weather == 'true')
+       needs.changes.outputs.context7 == 'true' || needs.changes.outputs.weather == 'true' ||
+       needs.changes.outputs.flyai == 'true')
     runs-on: [self-hosted, Windows, X64, agent-tools-build]
     timeout-minutes: 40
     defaults:
@@ -240,7 +256,7 @@ jobs:
         shell: powershell -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
     env:
       SERVICES: >-
-        ${{ needs.changes.outputs.gateway == 'true' && 'gateway,' || '' }}${{ needs.changes.outputs.image == 'true' && 'image,' || '' }}${{ needs.changes.outputs.search == 'true' && 'search,' || '' }}${{ needs.changes.outputs.reader == 'true' && 'reader,' || '' }}${{ needs.changes.outputs.trends == 'true' && 'trends,' || '' }}${{ needs.changes.outputs.amap == 'true' && 'amap,' || '' }}${{ needs.changes.outputs.context7 == 'true' && 'context7,' || '' }}${{ needs.changes.outputs.weather == 'true' && 'weather,' || '' }}
+        ${{ needs.changes.outputs.gateway == 'true' && 'gateway,' || '' }}${{ needs.changes.outputs.image == 'true' && 'image,' || '' }}${{ needs.changes.outputs.search == 'true' && 'search,' || '' }}${{ needs.changes.outputs.reader == 'true' && 'reader,' || '' }}${{ needs.changes.outputs.trends == 'true' && 'trends,' || '' }}${{ needs.changes.outputs.amap == 'true' && 'amap,' || '' }}${{ needs.changes.outputs.context7 == 'true' && 'context7,' || '' }}${{ needs.changes.outputs.weather == 'true' && 'weather,' || '' }}${{ needs.changes.outputs.flyai == 'true' && 'flyai,' || '' }}
     steps:
       - name: Configure Docker credential directory
         # 构建机上的 Fusion runner 用同一个服务账号，凭据按任务隔离，互不覆盖。
@@ -283,7 +299,7 @@ jobs:
 
   # 三个服务共用 dev 上的一份部署目录（.env 与生图存储不入库），先同步到本次提交再分别部署。
   sync:
-    needs: [changes, check-gateway, check-image, check-search, check-reader, check-amap, check-context7, check-weather]
+    needs: [changes, check-gateway, check-image, check-search, check-reader, check-amap, check-context7, check-weather, check-flyai]
     if: >-
       always() && github.event_name != 'pull_request' &&
       github.ref == 'refs/heads/main' &&
@@ -486,8 +502,31 @@ jobs:
         # 用真实凭证查一次北京的城市与逐日预报，确认凭证有效且能连通和风。
         run: docker exec -i weather-service python - < "$DEPLOY_DIR/services/weather/scripts/smoke_weather.py"
 
+  deploy-flyai:
+    needs: [changes, sync, publish, deploy-weather]
+    if: always() && needs.sync.result == 'success' && needs.publish.result == 'success' && needs.changes.outputs.flyai == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    steps:
+      - name: Deploy
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: bash "$DEPLOY_DIR/.github/scripts/deploy-from-acr.sh" flyai
+      - name: Health check
+        # 只查健康，不真实调用供应商：每次航班 / 高铁查询都消耗 FlyAI 配额。
+        run: |
+          for i in $(seq 1 15); do
+            if docker exec flyai-adapter node -e "fetch('http://127.0.0.1:8093/health',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              echo "healthy after ${i} attempt(s)"; exit 0
+            fi
+            sleep 2
+          done
+          echo "flyai-adapter did not become healthy within 30s"
+          docker logs --tail 50 flyai-adapter
+          exit 1
+
   deploy-gateway:
-    needs: [changes, sync, publish, deploy-reader, deploy-trends, deploy-amap, deploy-context7, deploy-weather]
+    needs: [changes, sync, publish, deploy-reader, deploy-trends, deploy-amap, deploy-context7, deploy-weather, deploy-flyai]
     if: always() && needs.sync.result == 'success' && needs.publish.result == 'success' && needs.changes.outputs.gateway == 'true'
     runs-on: [self-hosted, dev-agent-tools]
     steps:
