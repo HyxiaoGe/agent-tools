@@ -13,6 +13,7 @@ agent-tools 的统一入口。调用方只配一个地址和一把产品密钥�
 | `/search/...` | search-service（如 `/search/search`、`/search/mcp`） |
 | `/reader/...` | reader-service（如 `/reader/read`） |
 | `/trends/...` | trends-mcp（TrendRadar 热榜 MCP，`/trends/mcp`） |
+| `/amap/...` | amap-mcp（高德官方 MCP 的代理，`/amap/mcp`；付费服务，产品要在 `services` 里写明） |
 
 `GET /health` 不需要密钥。生图结果图片 `GET|HEAD /image/static/...` 本身就是公开地址，也不需要密钥、不记账。路径里含 `.` / `..` 段一律 400，防止借公开前缀绕过鉴权。
 

@@ -13,6 +13,7 @@ from app.main import create_app
 from app.usage import UsageRecord, UsageStore, now_iso
 from app.usage_report import summarize
 
+SERVICES = ("image", "search", "reader", "trends", "amap")
 FUSION_KEY = "fusion-test-key"
 VALIDATION_KEY = "validation-test-key"
 
@@ -53,7 +54,7 @@ class Upstreams:
     """记录每个服务收到的请求，按服务返回预设响应或抛出预设异常。"""
 
     def __init__(self):
-        self.requests: dict[str, list[httpx.Request]] = {"image": [], "search": [], "reader": [], "trends": []}
+        self.requests: dict[str, list[httpx.Request]] = {name: [] for name in SERVICES}
         self.handlers: dict[str, Callable[[httpx.Request], httpx.Response]] = {}
 
     def transport(self, service: str) -> httpx.MockTransport:
@@ -74,7 +75,7 @@ def upstreams() -> Upstreams:
 
 @pytest.fixture
 async def client(settings, upstreams):
-    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader", "trends")})
+    app = create_app(settings, {name: upstreams.transport(name) for name in SERVICES})
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://gateway") as http:
@@ -369,9 +370,17 @@ def test_usage_store_adds_tool_column_to_an_existing_table(tmp_path):
     conn.close()
 
 
+async def test_paid_services_are_not_allowed_by_default(client, upstreams):
+    # amap 是付费服务，没在 PRODUCTS 里写明的产品调不到；健康检查除外。
+    response = await client.post("/amap/mcp", content=b"{}", headers=auth())
+    assert response.status_code == 403
+    assert response.json()["error"] == "service_not_allowed"
+    assert upstreams.requests["amap"] == []
+
+
 async def test_products_only_reach_their_allowed_services(settings, upstreams):
     settings.products["validation"] = ProductConfig(service_key_env="VALIDATION_SERVICE_KEY", services=["search"])
-    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader", "trends")})
+    app = create_app(settings, {name: upstreams.transport(name) for name in SERVICES})
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gateway") as http:
             denied = await http.post("/image/mcp", content=b"{}", headers=auth(VALIDATION_KEY))
@@ -418,6 +427,7 @@ async def test_generated_images_are_public_and_not_recorded(client, upstreams, s
         ("search", "/search/health", "/health"),
         ("reader", "/reader/health", "/health"),
         ("image", "/image/v1/health", "/v1/health"),
+        ("amap", "/amap/health", "/health"),
     ],
 )
 async def test_health_checks_are_public_and_not_recorded(client, upstreams, settings, service, path, upstream_path):
@@ -486,7 +496,7 @@ async def call_asgi(app, path: str, *, headers: list[tuple[bytes, bytes]] = (), 
 
 @pytest.mark.parametrize("path", ["/image/static/../mcp", "/image/static/./x", "/search/a/../b"])
 async def test_dot_segments_are_rejected(settings, upstreams, path):
-    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader", "trends")})
+    app = create_app(settings, {name: upstreams.transport(name) for name in SERVICES})
     async with app.router.lifespan_context(app):
         sent = await call_asgi(app, path)
     assert sent[0]["status"] == 400
@@ -520,7 +530,7 @@ async def test_usage_is_recorded_when_caller_disconnects_after_full_response(set
     upstreams.handlers["image"] = lambda request: httpx.Response(
         404, headers={"content-length": "9"}, stream=SlowClosingStream(b"Not Found")
     )
-    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader", "trends")})
+    app = create_app(settings, {name: upstreams.transport(name) for name in SERVICES})
     headers = [(b"authorization", f"Bearer {FUSION_KEY}".encode()), (b"x-caller-scene", b"smoke_test")]
     async with app.router.lifespan_context(app):
         sent = await call_asgi(app, "/image/health", headers=headers, disconnect_after_body=True)

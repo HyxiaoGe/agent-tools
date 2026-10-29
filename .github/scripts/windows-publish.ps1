@@ -1,5 +1,5 @@
 ﻿param(
-    # 逗号分隔的服务名：gateway,image,search,reader,trends
+    # 逗号分隔的服务名：gateway,image,search,reader,trends,amap
     [Parameter(Mandatory = $true)]
     [string]$Services,
 
@@ -14,7 +14,7 @@
 # 只构建并推送镜像；检查和测试在 dev 上的 check-* 任务里跑。
 $ErrorActionPreference = "Stop"
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
-$contexts = @{ gateway = "gateway"; image = "services\image"; search = "services\search"; reader = "services\reader"; trends = "services\trends" }
+$contexts = @{ gateway = "gateway"; image = "services\image"; search = "services\search"; reader = "services\reader"; trends = "services\trends"; amap = "services\amap" }
 
 # 拉 Docker Hub 基础镜像、推 ACR 偶发 EOF，各重试 3 次。
 function Invoke-WithRetry {

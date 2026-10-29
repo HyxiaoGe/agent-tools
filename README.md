@@ -10,10 +10,12 @@ flowchart LR
         S["search<br/>多源检索"]
         R["reader<br/>网页正文"]
         T["trends<br/>热榜 MCP"]
+        A["amap<br/>高德 MCP 代理"]
     end
     G --> S
     G --> R
     G --> T
+    G --> A
     I --> IP["Seedream / Gemini"]
     S --> SP["Brave / Tavily / Firecrawl / DeepSeek"]
     R --> RP["直连 / Firecrawl / Tavily / Jina"]
@@ -26,12 +28,13 @@ flowchart LR
 | [search](services/search/README.md) | 网页 / 新闻 / 图片搜索，换搜索源只改配置 | REST + MCP |
 | [reader](services/reader/README.md) | 输入 URL 返回 Markdown 正文，读不到时给出结构化原因 | REST |
 | [trends](services/trends/README.md) | 国内热榜与 RSS 查询（TrendRadar），补齐上游工具契约 | MCP |
+| [amap](services/amap/README.md) | 高德地图：地理编码、地点搜索、路线规划（官方 MCP 的代理，服务端持有密钥、只放行只读工具） | MCP |
 
 ## 设计要点
 
 ### 身份只来自密钥，下游不各自鉴权
 
-网关按 `Authorization` 里的产品密钥认定调用方，再按产品配置放行服务（付费服务要逐个产品写明才可调用），丢弃调用方自带的身份头再重写转发，下游收到的产品、用户、场景都可信。search / reader / trends 自身不做鉴权，只接入专用内网，外部和其他容器都只能经网关访问；路径里含 `.` / `..` 段一律拒绝，防止借公开前缀绕过鉴权。每个请求记一行用量（产品、用户、场景、请求 ID、MCP 工具名、耗时），可以按产品、场景和工具统计调用量。
+网关按 `Authorization` 里的产品密钥认定调用方，再按产品配置放行服务（付费服务要逐个产品写明才可调用），丢弃调用方自带的身份头再重写转发，下游收到的产品、用户、场景都可信。search / reader / trends / amap 自身不做鉴权，只接入专用内网，外部和其他容器都只能经网关访问；路径里含 `.` / `..` 段一律拒绝，防止借公开前缀绕过鉴权。每个请求记一行用量（产品、用户、场景、请求 ID、MCP 工具名、耗时），可以按产品、场景和工具统计调用量。
 
 ### 慢服务不拖垮其他服务
 

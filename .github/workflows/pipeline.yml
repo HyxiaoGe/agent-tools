@@ -9,7 +9,7 @@ on:
       service:
         description: 要重新部署的服务
         type: choice
-        options: [all, gateway, image, search, reader, trends]
+        options: [all, gateway, image, search, reader, trends, amap]
         default: all
 
 permissions:
@@ -34,6 +34,7 @@ jobs:
       search: ${{ steps.detect.outputs.search }}
       reader: ${{ steps.detect.outputs.reader }}
       trends: ${{ steps.detect.outputs.trends }}
+      amap: ${{ steps.detect.outputs.amap }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,7 +47,7 @@ jobs:
           REQUESTED: ${{ inputs.service }}
         run: |
           set -euo pipefail
-          services="gateway image search reader trends"
+          services="gateway image search reader trends amap"
           if [ "$EVENT" = "workflow_dispatch" ]; then
             for s in $services; do
               if [ "$REQUESTED" = "all" ] || [ "$REQUESTED" = "$s" ]; then v=true; else v=false; fi
@@ -82,6 +83,27 @@ jobs:
         working-directory: gateway
     env:
       # 用 dev 系统自带的 Python 3.12，不从 GitHub 下载解释器（dev 拉 GitHub 发布包经常中断）。
+      UV_PYTHON: /usr/bin/python3
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: ~/.local/bin/uv sync --frozen
+      - name: Ruff
+        run: |
+          ~/.local/bin/ruff check .
+          ~/.local/bin/ruff format --check .
+      - name: Tests
+        run: ~/.local/bin/uv run --frozen pytest -q
+
+  check-amap:
+    needs: changes
+    if: needs.changes.outputs.amap == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    defaults:
+      run:
+        working-directory: services/amap
+    env:
       UV_PYTHON: /usr/bin/python3
       UV_PYTHON_DOWNLOADS: never
     steps:
@@ -158,14 +180,14 @@ jobs:
         run: python -m unittest -v test_main
 
   publish:
-    needs: [changes, check-gateway, check-image, check-search, check-reader]
+    needs: [changes, check-gateway, check-image, check-search, check-reader, check-amap]
     if: >-
       always() && github.event_name != 'pull_request' &&
       github.ref == 'refs/heads/main' &&
       !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') &&
       (needs.changes.outputs.gateway == 'true' || needs.changes.outputs.image == 'true' ||
        needs.changes.outputs.search == 'true' || needs.changes.outputs.reader == 'true' ||
-       needs.changes.outputs.trends == 'true')
+       needs.changes.outputs.trends == 'true' || needs.changes.outputs.amap == 'true')
     runs-on: [self-hosted, Windows, X64, agent-tools-build]
     timeout-minutes: 40
     defaults:
@@ -173,7 +195,7 @@ jobs:
         shell: powershell -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
     env:
       SERVICES: >-
-        ${{ needs.changes.outputs.gateway == 'true' && 'gateway,' || '' }}${{ needs.changes.outputs.image == 'true' && 'image,' || '' }}${{ needs.changes.outputs.search == 'true' && 'search,' || '' }}${{ needs.changes.outputs.reader == 'true' && 'reader,' || '' }}${{ needs.changes.outputs.trends == 'true' && 'trends,' || '' }}
+        ${{ needs.changes.outputs.gateway == 'true' && 'gateway,' || '' }}${{ needs.changes.outputs.image == 'true' && 'image,' || '' }}${{ needs.changes.outputs.search == 'true' && 'search,' || '' }}${{ needs.changes.outputs.reader == 'true' && 'reader,' || '' }}${{ needs.changes.outputs.trends == 'true' && 'trends,' || '' }}${{ needs.changes.outputs.amap == 'true' && 'amap,' || '' }}
     steps:
       - name: Configure Docker credential directory
         # 构建机上的 Fusion runner 用同一个服务账号，凭据按任务隔离，互不覆盖。
@@ -216,7 +238,7 @@ jobs:
 
   # 三个服务共用 dev 上的一份部署目录（.env 与生图存储不入库），先同步到本次提交再分别部署。
   sync:
-    needs: [changes, check-gateway, check-image, check-search, check-reader]
+    needs: [changes, check-gateway, check-image, check-search, check-reader, check-amap]
     if: >-
       always() && github.event_name != 'pull_request' &&
       github.ref == 'refs/heads/main' &&
@@ -344,8 +366,33 @@ jobs:
           docker logs --tail 50 trends-mcp
           exit 1
 
+  deploy-amap:
+    needs: [changes, sync, publish, deploy-trends]
+    if: always() && needs.sync.result == 'success' && needs.publish.result == 'success' && needs.changes.outputs.amap == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    steps:
+      - name: Deploy
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: bash "$DEPLOY_DIR/.github/scripts/deploy-from-acr.sh" amap
+      - name: Health check
+        run: |
+          for i in $(seq 1 15); do
+            if docker exec amap-mcp python -c "import urllib.request; urllib.request.urlopen('http://localhost:3334/health', timeout=3)"; then
+              echo "healthy after ${i} attempt(s)"; exit 0
+            fi
+            sleep 2
+          done
+          echo "amap-mcp did not become healthy within 30s"
+          docker logs --tail 50 amap-mcp
+          exit 1
+      - name: MCP smoke
+        # 用真实密钥调一次 maps_geo，确认白名单生效且能连通高德。
+        run: docker exec -i amap-mcp python - < "$DEPLOY_DIR/services/amap/scripts/smoke_mcp.py"
+
   deploy-gateway:
-    needs: [changes, sync, publish, deploy-reader, deploy-trends]
+    needs: [changes, sync, publish, deploy-reader, deploy-trends, deploy-amap]
     if: always() && needs.sync.result == 'success' && needs.publish.result == 'success' && needs.changes.outputs.gateway == 'true'
     runs-on: [self-hosted, dev-agent-tools]
     steps:
