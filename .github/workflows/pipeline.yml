@@ -310,8 +310,12 @@ jobs:
       - name: Cleanup local images and credentials
         if: always()
         run: |
+          # bake --push 不会把镜像留在本地，镜像不存在属正常；清理失败不能让作业变红。
+          $ErrorActionPreference = "SilentlyContinue"
           foreach ($service in ($env:SERVICES -split "," | Where-Object { $_ })) {
-            docker image rm "${env:IMAGE_PREFIX}/agent-tools-${service}:${env:GITHUB_SHA}" 2>$null
+            $image = "${env:IMAGE_PREFIX}/agent-tools-${service}:${env:GITHUB_SHA}"
+            docker image inspect $image *> $null
+            if ($LASTEXITCODE -eq 0) { docker image rm $image *> $null }
           }
           if ($env:DOCKER_CONFIG -and (Test-Path $env:DOCKER_CONFIG)) { Remove-Item -Recurse -Force $env:DOCKER_CONFIG }
           exit 0

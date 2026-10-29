@@ -1,3 +1,4 @@
+﻿# 本文件以带 BOM 的 UTF-8 保存：Windows PowerShell 5.1 对无 BOM 的脚本按系统 ANSI 代码页读取，中文会乱码并破坏字符串里的 $() 展开。
 param(
     # 逗号分隔的服务名：gateway,image,search,reader,trends,amap,context7,weather,flyai
     [Parameter(Mandatory = $true)]
@@ -40,7 +41,8 @@ foreach ($service in $selected) {
 }
 $bake = @{ group = @{ default = @{ targets = $selected } }; target = $targets }
 $bakeFile = Join-Path $env:RUNNER_TEMP "agent-tools-bake-$env:GITHUB_RUN_ID.json"
-ConvertTo-Json -InputObject $bake -Depth 6 | Set-Content -Path $bakeFile -Encoding utf8
+# 不能用 Set-Content -Encoding utf8：Windows PowerShell 5.1 会写入 BOM，bake 解析 JSON 时拒绝。
+[System.IO.File]::WriteAllText($bakeFile, (ConvertTo-Json -InputObject $bake -Depth 6), (New-Object System.Text.UTF8Encoding $false))
 Write-Host "bake 目标：$($selected -join ', ')"
 
 # 拉 Docker Hub 基础镜像、下载依赖、推 ACR 偶发失败，整体重试 3 次；已建好的层会命中缓存，重试只补失败的部分。
