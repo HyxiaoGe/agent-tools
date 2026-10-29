@@ -20,11 +20,11 @@ search / reader / trends / amap / context7 / weather / flyai 自身不鉴权，�
 
 `.github/workflows/pipeline.yml`：PR 和 push `main` 时只在 dev 上检查有改动的服务；合入 `main` 后：
 
-1. Windows 构建机（runner 标签 `agent-tools-build`）构建有改动的服务镜像，推到 ACR `seanfield/agent-tools-<服务>:<提交 SHA>`（`.github/scripts/windows-publish.ps1`）。
+1. Windows 构建机（runner 标签 `agent-tools-build`）用 `docker buildx bake` 并行构建有改动的服务镜像并推到 ACR `seanfield/agent-tools-<服务>:<提交 SHA>`（`.github/scripts/windows-publish.ps1`；pip 走阿里云镜像源且不经代理）。
 2. dev 上的部署目录 `~/project/agent-tools` 切到本次提交（compose 文件与 `.env`）。
-3. dev 依次拉镜像部署（`.github/scripts/deploy-from-acr.sh`），并把镜像标成 `agent-tools/<服务>:current`。在 dev 上手动 `docker compose up -d` 时沿用这个版本，不会重新构建。
+3. dev 并行拉镜像部署各服务（`.github/scripts/deploy-from-acr.sh`），网关最后部署；镜像标成 `agent-tools/<服务>:current`，在 dev 上手动 `docker compose up -d` 时沿用这个版本，不会重新构建。
 
-`.github/` 有改动时所有服务都跑。
+`.github/` 有改动时所有服务都跑检查，但只有自身目录有改动的服务才重新构建、推送和部署；需要全量重部用下面的手动触发 `service=all`。dev 上为 agent-tools 注册了两个 runner 实例（`github-runner-agent-tools` 与 `github-runner-agent-tools-2`），检查和部署作业两两并行。
 
 手动重新部署（例如改了 dev 上的 `.env`）：
 
