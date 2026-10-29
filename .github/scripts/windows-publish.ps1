@@ -1,6 +1,6 @@
 ﻿# 本文件以带 BOM 的 UTF-8 保存：Windows PowerShell 5.1 对无 BOM 的脚本按系统 ANSI 代码页读取，中文会乱码并破坏字符串里的 $() 展开。
 param(
-    # 逗号分隔的服务名：gateway,image,search,reader,trends,amap,context7,weather,flyai
+    # 逗号分隔的服务名：gateway,image,search,reader,trends,amap,context7,weather,flyai,tmap
     [Parameter(Mandatory = $true)]
     [string]$Services,
 
@@ -16,7 +16,7 @@ param(
 # 多个服务用 docker buildx bake 并行构建并直接推送，不再逐个 build / push。
 $ErrorActionPreference = "Stop"
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
-$contexts = @{ gateway = "gateway"; image = "services\image"; search = "services\search"; reader = "services\reader"; trends = "services\trends"; amap = "services\amap"; context7 = "services\context7"; weather = "services\weather"; flyai = "services\flyai" }
+$contexts = @{ gateway = "gateway"; image = "services\image"; search = "services\search"; reader = "services\reader"; trends = "services\trends"; amap = "services\amap"; context7 = "services\context7"; weather = "services\weather"; flyai = "services\flyai"; tmap = "services\tmap" }
 
 $selected = @($Services -split "," | Where-Object { $_ })
 if ($selected.Count -eq 0) { throw "没有要构建的服务" }

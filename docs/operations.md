@@ -4,7 +4,7 @@
 
 | 目录 | 服务 | dev 端口 | 说明 |
 |---|---|---|---|
-| `gateway` | agent-tools-gateway | 8100（仅本机；middleware_default 内按容器名访问；外部经 `agent-tools.dev.seanfield.org`） | 统一入口：产品密钥鉴权、调用记账、`/image` `/search` `/reader` `/trends` `/amap` `/context7` `/weather` `/flyai` 转发 |
+| `gateway` | agent-tools-gateway | 8100（仅本机；middleware_default 内按容器名访问；外部经 `agent-tools.dev.seanfield.org`） | 统一入口：产品密钥鉴权、调用记账、`/image` `/search` `/reader` `/trends` `/amap` `/context7` `/weather` `/flyai` `/tmap` 转发 |
 | `services/image` | image-service | 8090（host 网络） | 生图 / 改图，REST + MCP，产品密钥鉴权与用量记账 |
 | `services/search` | search-service | 8080（仅 agent-tools-internal） | 多搜索源统一检索；自带 `search-redis` 存缓存与 Firecrawl 每日用量 |
 | `services/reader` | reader-service | 8091（仅 agent-tools-internal） | 网页正文读取 |
@@ -13,8 +13,9 @@
 | `services/context7` | context7-mcp | 3335（仅 agent-tools-internal） | Context7 官方 MCP 的代理：注入密钥、文档工具白名单、限流标记；密钥按账号限流，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
 | `services/weather` | weather-service | 8092（仅 agent-tools-internal） | 和风天气的只读代理：持有 Ed25519 凭证签 JWT、城市查询与逐日 / 逐小时预报、字段归一；按项目计费，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
 | `services/flyai` | flyai-adapter | 8093（仅 agent-tools-internal） | FlyAI 航班 / 高铁查询适配器：第三方 CLI 以隔离子进程运行、持有 API Key、字段投影；按用户并发隔离；付费服务，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
+| `services/tmap` | tmap-mcp | 3336（仅 agent-tools-internal） | 腾讯地图（腾讯位置服务）官方 MCP 的代理：注入密钥、只读白名单；按 key 计每日配额，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
 
-search / reader / trends / amap / context7 / weather / flyai 自身不鉴权，只接入专用网络 `agent-tools-internal`（流水线 sync 步骤创建），只有网关能访问；其他容器和监控都经网关。各服务健康检查 `/search/health`、`/reader/health`、`/image/v1/health`、`/amap/health`、`/context7/health`、`/weather/health`、`/flyai/health` 经网关免密钥、不记账。
+search / reader / trends / amap / context7 / weather / flyai / tmap 自身不鉴权，只接入专用网络 `agent-tools-internal`（流水线 sync 步骤创建），只有网关能访问；其他容器和监控都经网关。各服务健康检查 `/search/health`、`/reader/health`、`/image/v1/health`、`/amap/health`、`/context7/health`、`/weather/health`、`/flyai/health`、`/tmap/health` 经网关免密钥、不记账。
 
 ## 流水线
 
@@ -29,7 +30,7 @@ search / reader / trends / amap / context7 / weather / flyai 自身不鉴权，�
 手动重新部署（例如改了 dev 上的 `.env`）：
 
 ```bash
-gh workflow run pipeline.yml -R HyxiaoGe/agent-tools -f service=<all|gateway|image|search|reader|trends|amap|context7|weather|flyai>
+gh workflow run pipeline.yml -R HyxiaoGe/agent-tools -f service=<all|gateway|image|search|reader|trends|amap|context7|weather|flyai|tmap>
 ```
 
 dev 上每个服务的 `.env` 放在部署目录对应的 `services/<name>/.env`（网关是 `gateway/.env`），不入库；生图结果与用量库在 `services/image/storage`，网关用量库在 `gateway/storage`。
