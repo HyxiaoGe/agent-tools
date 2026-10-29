@@ -34,11 +34,18 @@ until docker pull -q "$ref"; do
   sleep 10
 done
 
-# compose 默认用 agent-tools/<服务>:current；在 dev 上手动 docker compose up -d 时沿用当前部署的镜像，不会重新构建。
+# 容器用本地短名 agent-tools/<服务>:<短 SHA> 运行，docker ps 里一眼能看出服务和版本，不显示 ACR 长地址；
+# compose 默认用 agent-tools/<服务>:current，在 dev 上手动 docker compose up -d 时沿用当前部署的镜像，不会重新构建。
+local_ref="agent-tools/$service:${GITHUB_SHA:0:7}"
+docker tag "$ref" "$local_ref"
 docker tag "$ref" "agent-tools/$service:current"
+# 去掉 ACR 长名的标签，镜像本身由短名引用着。
+docker rmi "$ref" >/dev/null
 cd "$dir"
-AGENT_TOOLS_IMAGE="$ref" docker compose up -d
+AGENT_TOOLS_IMAGE="$local_ref" docker compose up -d
 
 # 本机只留本次部署的版本，历史版本在 ACR 里。
-docker images "$repo" --format '{{.Repository}}:{{.Tag}}' | grep -vxF "$ref" | xargs -r docker rmi >/dev/null || true
+docker images "agent-tools/$service" --format '{{.Repository}}:{{.Tag}}' \
+  | grep -vxF -e "$local_ref" -e "agent-tools/$service:current" | xargs -r docker rmi >/dev/null || true
+docker images "$repo" --format '{{.Repository}}:{{.Tag}}' | xargs -r docker rmi >/dev/null || true
 docker image prune -f >/dev/null

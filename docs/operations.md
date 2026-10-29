@@ -23,7 +23,7 @@ search / reader / trends / amap / context7 / weather / flyai / tmap 自身不鉴
 
 1. Windows 构建机（runner 标签 `agent-tools-build`）用 `docker buildx bake` 并行构建有改动的服务镜像并推到 ACR `seanfield/agent-tools-<服务>:<提交 SHA>`（`.github/scripts/windows-publish.ps1`；构建容器直连外网，实测比走代理或国内镜像源快）。
 2. dev 上的部署目录 `~/project/agent-tools` 切到本次提交（compose 文件与 `.env`）。
-3. dev 并行拉镜像部署各服务（`.github/scripts/deploy-from-acr.sh`），网关最后部署；镜像标成 `agent-tools/<服务>:current`，在 dev 上手动 `docker compose up -d` 时沿用这个版本，不会重新构建。
+3. dev 并行拉镜像部署各服务（`.github/scripts/deploy-from-acr.sh`），网关最后部署。容器用本地短名 `agent-tools/<服务>:<短 SHA>` 运行（`docker ps` 里不显示 ACR 长地址），同时标成 `agent-tools/<服务>:current`，在 dev 上手动 `docker compose up -d` 时沿用这个版本，不会重新构建。
 
 `.github/` 有改动时所有服务都跑检查，但只有自身目录有改动的服务才重新构建、推送和部署；需要全量重部用下面的手动触发 `service=all`。dev 上为 agent-tools 注册了两个 runner 实例（`github-runner-agent-tools` 与 `github-runner-agent-tools-2`），检查和部署作业两两并行。
 

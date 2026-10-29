@@ -2,7 +2,7 @@ name: trends
 services:
   trends-mcp:
     build: .
-    # dev 部署时由 deploy-from-acr.sh 传入 ACR 镜像；未传时用当前已部署的版本。
+    # dev 部署时由 deploy-from-acr.sh 传入本次提交的镜像（agent-tools/<服务>:<短 SHA>）；未传时用当前已部署的版本。
     image: ${AGENT_TOOLS_IMAGE:-agent-tools/trends:current}
     container_name: trends-mcp
     environment:
