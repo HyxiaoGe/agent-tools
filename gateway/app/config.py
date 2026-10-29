@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     trends_upstream: str = "http://trends-mcp:3333"
     # 高德官方 MCP 的代理（注入密钥、只读白名单），付费服务，不在产品默认放行列表里。
     amap_upstream: str = "http://amap-mcp:3334"
+    # Context7 官方 MCP 的代理（注入密钥、文档工具白名单），密钥按账号限流，不在产品默认放行列表里。
+    context7_upstream: str = "http://context7-mcp:3335"
 
     # 超时要大于调用方自己的超时，由调用方决定放弃；image-service 内部总预算 135s。
     image_timeout_seconds: float = 180
@@ -49,6 +51,8 @@ class Settings(BaseSettings):
     reader_timeout_seconds: float = 30
     trends_timeout_seconds: float = 60
     amap_timeout_seconds: float = 60
+    # Context7 上游常见 5–20s，代理自身 45s 放弃，这里再留余量。
+    context7_timeout_seconds: float = 90
 
     # 按服务分开的连接池：某个服务堆积慢请求时只占满自己的池，不拖住其他服务。
     image_max_connections: int = 16
@@ -56,6 +60,7 @@ class Settings(BaseSettings):
     reader_max_connections: int = 32
     trends_max_connections: int = 16
     amap_max_connections: int = 16
+    context7_max_connections: int = 16
     # 池满时排队等待的上限，超过即返回 503。
     pool_wait_seconds: float = 5
 
@@ -91,4 +96,7 @@ class Settings(BaseSettings):
             "reader": Upstream("reader", s.reader_upstream, s.reader_timeout_seconds, s.reader_max_connections),
             "trends": Upstream("trends", s.trends_upstream, s.trends_timeout_seconds, s.trends_max_connections),
             "amap": Upstream("amap", s.amap_upstream, s.amap_timeout_seconds, s.amap_max_connections),
+            "context7": Upstream(
+                "context7", s.context7_upstream, s.context7_timeout_seconds, s.context7_max_connections
+            ),
         }

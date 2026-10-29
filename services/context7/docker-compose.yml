@@ -1,0 +1,24 @@
+name: context7
+services:
+  context7-mcp:
+    build: .
+    # dev 部署时由 deploy-from-acr.sh 传入 ACR 镜像；未传时用当前已部署的版本，本地开发会按 build 构建。
+    image: ${AGENT_TOOLS_IMAGE:-agent-tools/context7:current}
+    container_name: context7-mcp
+    env_file: .env
+    environment:
+      - TZ=Asia/Shanghai
+      - MCP_PORT=3335
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    restart: unless-stopped
+    # 自身无鉴权，只在专用网络里，经网关 /context7/mcp 访问；要访问公网的 Context7，网络不能是 internal。
+    networks:
+      - agent-tools
+
+networks:
+  agent-tools:
+    external: true
+    name: agent-tools-internal
