@@ -13,7 +13,7 @@ from app.main import create_app
 from app.usage import UsageRecord, UsageStore, now_iso
 from app.usage_report import summarize
 
-SERVICES = ("image", "search", "reader", "trends", "amap", "context7", "weather", "flyai")
+SERVICES = ("image", "search", "reader", "trends", "amap", "context7", "weather", "flyai", "tmap")
 FUSION_KEY = "fusion-test-key"
 VALIDATION_KEY = "validation-test-key"
 
@@ -385,6 +385,9 @@ async def test_paid_services_are_not_allowed_by_default(client, upstreams):
     response = await client.post("/flyai/v1/search/flights", content=b"{}", headers=auth())
     assert response.status_code == 403
     assert upstreams.requests["flyai"] == []
+    response = await client.post("/tmap/mcp", content=b"{}", headers=auth())
+    assert response.status_code == 403
+    assert upstreams.requests["tmap"] == []
 
 
 async def test_products_only_reach_their_allowed_services(settings, upstreams):
@@ -440,6 +443,7 @@ async def test_generated_images_are_public_and_not_recorded(client, upstreams, s
         ("context7", "/context7/health", "/health"),
         ("weather", "/weather/health", "/health"),
         ("flyai", "/flyai/health", "/health"),
+        ("tmap", "/tmap/health", "/health"),
     ],
 )
 async def test_health_checks_are_public_and_not_recorded(client, upstreams, settings, service, path, upstream_path):

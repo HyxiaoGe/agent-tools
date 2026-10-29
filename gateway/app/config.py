@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     # 和风天气的只读代理（持有凭证签 JWT、字段归一），按项目计费，不在产品默认放行列表里。
     weather_upstream: str = "http://weather-service:8092"
     flyai_upstream: str = "http://flyai-adapter:8093"
+    # 腾讯地图官方 MCP 的代理（注入密钥、只读白名单），按 key 计每日配额，不在产品默认放行列表里。
+    tmap_upstream: str = "http://tmap-mcp:3336"
 
     # 超时要大于调用方自己的超时，由调用方决定放弃；image-service 内部总预算 135s。
     image_timeout_seconds: float = 180
@@ -60,6 +62,7 @@ class Settings(BaseSettings):
     weather_timeout_seconds: float = 30
     # FlyAI 适配器自身给供应商 CLI 20 秒，再留排队与传输余量。
     flyai_timeout_seconds: float = 30
+    tmap_timeout_seconds: float = 60
 
     # 按服务分开的连接池：某个服务堆积慢请求时只占满自己的池，不拖住其他服务。
     image_max_connections: int = 16
@@ -70,6 +73,7 @@ class Settings(BaseSettings):
     context7_max_connections: int = 16
     weather_max_connections: int = 16
     flyai_max_connections: int = 8
+    tmap_max_connections: int = 16
     # 池满时排队等待的上限，超过即返回 503。
     pool_wait_seconds: float = 5
 
@@ -110,4 +114,5 @@ class Settings(BaseSettings):
             ),
             "weather": Upstream("weather", s.weather_upstream, s.weather_timeout_seconds, s.weather_max_connections),
             "flyai": Upstream("flyai", s.flyai_upstream, s.flyai_timeout_seconds, s.flyai_max_connections),
+            "tmap": Upstream("tmap", s.tmap_upstream, s.tmap_timeout_seconds, s.tmap_max_connections),
         }

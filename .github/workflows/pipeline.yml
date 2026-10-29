@@ -9,7 +9,7 @@ on:
       service:
         description: 要重新部署的服务
         type: choice
-        options: [all, gateway, image, search, reader, trends, amap, context7, weather, flyai]
+        options: [all, gateway, image, search, reader, trends, amap, context7, weather, flyai, tmap]
         default: all
 
 permissions:
@@ -47,6 +47,8 @@ jobs:
       weather_deploy: ${{ steps.detect.outputs.weather_deploy }}
       flyai: ${{ steps.detect.outputs.flyai }}
       flyai_deploy: ${{ steps.detect.outputs.flyai_deploy }}
+      tmap: ${{ steps.detect.outputs.tmap }}
+      tmap_deploy: ${{ steps.detect.outputs.tmap_deploy }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,7 +61,7 @@ jobs:
           REQUESTED: ${{ inputs.service }}
         run: |
           set -euo pipefail
-          services="gateway image search reader trends amap context7 weather flyai"
+          services="gateway image search reader trends amap context7 weather flyai tmap"
           # 每个服务两组输出：<s> 表示要跑检查，<s>_deploy 表示要发布镜像并部署。
           # .github/ 改动会让所有服务都跑检查，但镜像内容没变就不重新构建、推送、部署。
           if [ "$EVENT" = "workflow_dispatch" ]; then
@@ -193,6 +195,27 @@ jobs:
       - name: Tests
         run: npm test
 
+  check-tmap:
+    needs: changes
+    if: needs.changes.outputs.tmap == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    defaults:
+      run:
+        working-directory: services/tmap
+    env:
+      UV_PYTHON: /usr/bin/python3
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: ~/.local/bin/uv sync --frozen
+      - name: Ruff
+        run: |
+          ~/.local/bin/ruff check .
+          ~/.local/bin/ruff format --check .
+      - name: Tests
+        run: ~/.local/bin/uv run --frozen pytest -q
+
   check-image:
     needs: changes
     if: needs.changes.outputs.image == 'true'
@@ -256,7 +279,7 @@ jobs:
         run: python -m unittest -v test_main
 
   publish:
-    needs: [changes, check-gateway, check-image, check-search, check-reader, check-amap, check-context7, check-weather, check-flyai]
+    needs: [changes, check-gateway, check-image, check-search, check-reader, check-amap, check-context7, check-weather, check-flyai, check-tmap]
     if: >-
       always() && github.event_name != 'pull_request' &&
       github.ref == 'refs/heads/main' &&
@@ -265,7 +288,7 @@ jobs:
        needs.changes.outputs.search_deploy == 'true' || needs.changes.outputs.reader_deploy == 'true' ||
        needs.changes.outputs.trends_deploy == 'true' || needs.changes.outputs.amap_deploy == 'true' ||
        needs.changes.outputs.context7_deploy == 'true' || needs.changes.outputs.weather_deploy == 'true' ||
-       needs.changes.outputs.flyai_deploy == 'true')
+       needs.changes.outputs.flyai_deploy == 'true' || needs.changes.outputs.tmap_deploy == 'true')
     runs-on: [self-hosted, Windows, X64, agent-tools-build]
     timeout-minutes: 40
     defaults:
@@ -273,7 +296,7 @@ jobs:
         shell: powershell -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
     env:
       SERVICES: >-
-        ${{ needs.changes.outputs.gateway_deploy == 'true' && 'gateway,' || '' }}${{ needs.changes.outputs.image_deploy == 'true' && 'image,' || '' }}${{ needs.changes.outputs.search_deploy == 'true' && 'search,' || '' }}${{ needs.changes.outputs.reader_deploy == 'true' && 'reader,' || '' }}${{ needs.changes.outputs.trends_deploy == 'true' && 'trends,' || '' }}${{ needs.changes.outputs.amap_deploy == 'true' && 'amap,' || '' }}${{ needs.changes.outputs.context7_deploy == 'true' && 'context7,' || '' }}${{ needs.changes.outputs.weather_deploy == 'true' && 'weather,' || '' }}${{ needs.changes.outputs.flyai_deploy == 'true' && 'flyai,' || '' }}
+        ${{ needs.changes.outputs.gateway_deploy == 'true' && 'gateway,' || '' }}${{ needs.changes.outputs.image_deploy == 'true' && 'image,' || '' }}${{ needs.changes.outputs.search_deploy == 'true' && 'search,' || '' }}${{ needs.changes.outputs.reader_deploy == 'true' && 'reader,' || '' }}${{ needs.changes.outputs.trends_deploy == 'true' && 'trends,' || '' }}${{ needs.changes.outputs.amap_deploy == 'true' && 'amap,' || '' }}${{ needs.changes.outputs.context7_deploy == 'true' && 'context7,' || '' }}${{ needs.changes.outputs.weather_deploy == 'true' && 'weather,' || '' }}${{ needs.changes.outputs.flyai_deploy == 'true' && 'flyai,' || '' }}${{ needs.changes.outputs.tmap_deploy == 'true' && 'tmap,' || '' }}
     steps:
       - name: Configure Docker credential directory
         # 构建机上的 Fusion runner 用同一个服务账号，凭据按任务隔离，互不覆盖。
@@ -320,7 +343,7 @@ jobs:
 
   # 三个服务共用 dev 上的一份部署目录（.env 与生图存储不入库），先同步到本次提交再分别部署。
   sync:
-    needs: [changes, check-gateway, check-image, check-search, check-reader, check-amap, check-context7, check-weather, check-flyai]
+    needs: [changes, check-gateway, check-image, check-search, check-reader, check-amap, check-context7, check-weather, check-flyai, check-tmap]
     if: >-
       always() && github.event_name != 'pull_request' &&
       github.ref == 'refs/heads/main' &&
@@ -546,9 +569,34 @@ jobs:
           docker logs --tail 50 flyai-adapter
           exit 1
 
+  deploy-tmap:
+    needs: [changes, sync, publish]
+    if: always() && needs.sync.result == 'success' && needs.publish.result == 'success' && needs.changes.outputs.tmap_deploy == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    steps:
+      - name: Deploy
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: bash "$DEPLOY_DIR/.github/scripts/deploy-from-acr.sh" tmap
+      - name: Health check
+        run: |
+          for i in $(seq 1 15); do
+            if docker exec tmap-mcp python -c "import urllib.request; urllib.request.urlopen('http://localhost:3336/health', timeout=3)"; then
+              echo "healthy after ${i} attempt(s)"; exit 0
+            fi
+            sleep 2
+          done
+          echo "tmap-mcp did not become healthy within 30s"
+          docker logs --tail 50 tmap-mcp
+          exit 1
+      - name: MCP smoke
+        # 用真实密钥调一次 placeSuggestion，确认白名单生效、能连通腾讯地图且 key 已分配额度。
+        run: docker exec -i tmap-mcp python - < "$DEPLOY_DIR/services/tmap/scripts/smoke_mcp.py"
+
   # 各服务并行部署；网关最后上，保证它转发到的都是本次提交的服务。
   deploy-gateway:
-    needs: [changes, sync, publish, deploy-image, deploy-search, deploy-reader, deploy-trends, deploy-amap, deploy-context7, deploy-weather, deploy-flyai]
+    needs: [changes, sync, publish, deploy-image, deploy-search, deploy-reader, deploy-trends, deploy-amap, deploy-context7, deploy-weather, deploy-flyai, deploy-tmap]
     if: always() && needs.sync.result == 'success' && needs.publish.result == 'success' && needs.changes.outputs.gateway_deploy == 'true'
     runs-on: [self-hosted, dev-agent-tools]
     steps:
