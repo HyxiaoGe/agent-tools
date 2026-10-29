@@ -9,9 +9,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _APP_ID_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 
 
+# 现有的基础服务：产品没写 services 时默认只放行这几个；之后接入的付费服务（地图、天气等）
+# 不在默认列表里，必须在 PRODUCTS 里逐个产品写明才放行。
+DEFAULT_PRODUCT_SERVICES = ("image", "search", "reader", "trends")
+
+
 class ProductConfig(BaseModel):
     # 只引用环境变量名，密钥本身不进配置结构，避免出现在日志或报错里。
     service_key_env: str = Field(pattern=r"^[A-Z][A-Z0-9_]{0,127}$")
+    # 该产品允许调用的服务；省略时为 DEFAULT_PRODUCT_SERVICES。
+    services: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -61,7 +68,16 @@ class Settings(BaseSettings):
         key_envs = [product.service_key_env for product in self.products.values()]
         if len(key_envs) != len(set(key_envs)):
             raise ValueError("PRODUCTS must not share a service key")
+        known = set(self.upstreams())
+        for app_id, product in self.products.items():
+            unknown = set(product.services or ()) - known
+            if unknown:
+                raise ValueError(f"PRODUCTS[{app_id}].services references unknown services: {sorted(unknown)}")
         return self
+
+    def allowed_services(self, app_id: str) -> frozenset[str]:
+        product = self.products[app_id]
+        return frozenset(DEFAULT_PRODUCT_SERVICES if product.services is None else product.services)
 
     def upstreams(self) -> dict[str, Upstream]:
         s = self

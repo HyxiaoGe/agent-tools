@@ -3,8 +3,9 @@
 agent-tools 的统一入口。调用方只配一个地址和一把产品密钥，网关负责：
 
 1. **鉴权**：`Authorization: Bearer <产品服务密钥>` 认定产品（`PRODUCTS` 配置，密钥只放环境变量）。认不出产品一律 401。
-2. **记账**：每个请求记一行（产品、用户、场景、请求 ID、服务、路径、状态、耗时），存 `storage/usage.sqlite3`，保留 90 天。
-3. **转发**：按路径前缀转到对应服务，路径其余部分原样保留。
+2. **按产品放行服务**：`PRODUCTS` 里每个产品可写 `services`（允许调用的服务名列表）；省略时为基础服务 `image` / `search` / `reader` / `trends`。之后接入的付费服务不在默认列表里，要逐个产品写明。调用未放行的服务返回 403 `service_not_allowed`，不转发、不记账，只留一条日志。
+3. **记账**：每个请求记一行（产品、用户、场景、请求 ID、服务、路径、MCP 工具名、状态、耗时），存 `storage/usage.sqlite3`，保留 90 天。MCP 调用都打在同一个 `/mcp` 路径，网关从 JSON-RPC 请求体里取 `tools/call` 的工具名记下来，只用于按工具统计用量，不改转发；`tools/list`、`initialize` 等消息和 REST 请求的工具名为空。
+4. **转发**：按路径前缀转到对应服务，路径其余部分原样保留。
 
 | 网关路径 | 上游 |
 |---|---|
@@ -38,6 +39,8 @@ agent-tools 的统一入口。调用方只配一个地址和一把产品密钥�
 每个服务有独立的连接池和超时，某个服务堆积慢请求不会拖住其他服务。
 
 ## 用量
+
+按产品、服务、场景、MCP 工具分组：
 
 ```bash
 docker exec agent-tools-gateway python -m app.usage_report --app-id fusion --days 7

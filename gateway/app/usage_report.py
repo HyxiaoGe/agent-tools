@@ -1,4 +1,4 @@
-"""按产品 / 服务 / 场景汇总网关调用：python -m app.usage_report [--app-id fusion] [--days 30]"""
+"""按产品 / 服务 / 场景 / MCP 工具汇总网关调用：python -m app.usage_report [--app-id fusion] [--days 30]"""
 
 from __future__ import annotations
 
@@ -20,14 +20,14 @@ def summarize(db_path: str, *, app_id: str | None, days: int) -> dict:
         params.append(app_id)
     rows = conn.execute(
         f"""
-        SELECT app_id, service, COALESCE(scene, 'unspecified') AS scene,
+        SELECT app_id, service, COALESCE(scene, 'unspecified') AS scene, tool,
                COUNT(*) AS requests,
                COUNT(DISTINCT user_id) AS users,
                SUM(outcome = 'ok' AND status < 400) AS succeeded,
                SUM(outcome != 'ok' OR status >= 400) AS failed,
                CAST(AVG(duration_ms) AS INTEGER) AS avg_duration_ms
         FROM requests WHERE {where}
-        GROUP BY app_id, service, scene
+        GROUP BY app_id, service, scene, tool
         ORDER BY app_id, service, requests DESC
         """,
         params,

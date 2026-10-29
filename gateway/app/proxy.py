@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
 import time
 
 import anyio
@@ -27,6 +29,27 @@ _HOP_BY_HOP = frozenset(
         "upgrade",
     }
 )
+_MCP_TOOL_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.:/-]{1,128}")
+# JSON-RPC 请求体很小，解析上限留足余量；更大的请求不是 MCP 调用。
+_MCP_BODY_PARSE_LIMIT = 64 * 1024
+
+
+def mcp_tool_name(path: str, body: bytes) -> str | None:
+    """MCP 的工具调用都打在同一个 /mcp 路径上，从 JSON-RPC 请求体里取出工具名只用于记账，不改转发。"""
+    # image-service 的 MCP 路径带尾斜杠（/mcp 会被重定向到 /mcp/）。
+    if path.rstrip("/").rsplit("/", 1)[-1] != "mcp" or not body or len(body) > _MCP_BODY_PARSE_LIMIT:
+        return None
+    try:
+        message = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(message, dict) or message.get("method") != "tools/call":
+        return None
+    params = message.get("params")
+    name = params.get("name") if isinstance(params, dict) else None
+    return name if isinstance(name, str) and _MCP_TOOL_NAME_PATTERN.fullmatch(name) else None
+
+
 # 调用方声明身份用的头只在网关这一层有效，转给上游前统一重写，不能被调用方直接塞给上游。
 _CALLER_HEADERS = frozenset(
     {"authorization", "x-caller-app", "x-caller-user", "x-caller-scene", "x-image-user", "x-image-scene"}
@@ -101,6 +124,7 @@ async def forward(
     caller: Caller | None,
     body: bytes,
     usage: UsageStore,
+    tool: str | None = None,
 ) -> Response:
     """caller 为 None 只用于公开资源（生图结果图片），不带身份头、不记账。"""
     started = time.monotonic()
@@ -118,6 +142,7 @@ async def forward(
             service=service,
             method=request.method,
             path=f"/{path}",
+            tool=tool,
             status=status,
             outcome=outcome,
             duration_ms=duration_ms,
@@ -128,6 +153,7 @@ async def forward(
                 "service": service,
                 "app_id": caller.app_id,
                 "path": record.path,
+                "tool": tool,
                 "status": status,
                 "outcome": outcome,
                 "duration_ms": duration_ms,

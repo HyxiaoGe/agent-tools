@@ -10,7 +10,7 @@ import pytest
 
 from app.config import ProductConfig, Settings
 from app.main import create_app
-from app.usage import UsageStore
+from app.usage import UsageRecord, UsageStore, now_iso
 from app.usage_report import summarize
 
 FUSION_KEY = "fusion-test-key"
@@ -300,6 +300,7 @@ async def test_usage_report_groups_by_product_service_and_scene(client, settings
             "app_id": "fusion",
             "service": "search",
             "scene": "chat",
+            "tool": None,
             "requests": 2,
             "users": 2,
             "succeeded": 2,
@@ -307,6 +308,94 @@ async def test_usage_report_groups_by_product_service_and_scene(client, settings
             "avg_duration_ms": report["breakdown"][0]["avg_duration_ms"],
         }
     ]
+
+
+async def test_mcp_tool_name_is_recorded_for_tool_calls_only(client, settings):
+    call = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "get_trending_topics"}}
+    listing = {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
+    await client.post("/trends/mcp", json=call, headers=auth())
+    await client.post("/trends/mcp", json=listing, headers=auth())
+    await client.post("/trends/mcp", content=b"not json", headers=auth())
+    await client.post("/search/search", json={"query": "x", "method": "tools/call"}, headers=auth())
+    # image-service 的 MCP 路径带尾斜杠。
+    await client.post("/image/mcp/", json={**call, "params": {"name": "generate_image"}}, headers=auth())
+
+    rows = usage_rows(settings)
+    assert [row["tool"] for row in rows] == ["get_trending_topics", None, None, None, "generate_image"]
+    report = summarize(settings.usage_db_path, app_id="fusion", days=1)
+    assert {(row["service"], row["tool"], row["requests"]) for row in report["breakdown"]} == {
+        ("trends", "get_trending_topics", 1),
+        ("trends", None, 2),
+        ("search", None, 1),
+        ("image", "generate_image", 1),
+    }
+
+
+async def test_mcp_tool_name_must_be_well_formed(client, settings):
+    call = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "bad name\n", "arguments": {}}}
+    await client.post("/trends/mcp", json=call, headers=auth())
+    (row,) = usage_rows(settings)
+    assert row["tool"] is None
+
+
+def test_usage_store_adds_tool_column_to_an_existing_table(tmp_path):
+    db_path = tmp_path / "usage.sqlite3"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, app_id TEXT NOT NULL, user_id TEXT, scene TEXT,
+            request_id TEXT, service TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL,
+            status INTEGER NOT NULL, outcome TEXT NOT NULL, duration_ms INTEGER NOT NULL
+        );
+        """
+    )
+    # 时间取当前，避免被保留期清理。
+    conn.execute(
+        "INSERT INTO requests (ts, app_id, service, method, path, status, outcome, duration_ms) "
+        "VALUES (?, 'fusion', 'search', 'POST', '/search', 200, 'ok', 1)",
+        (now_iso(),),
+    )
+    conn.commit()
+    conn.close()
+
+    store = UsageStore(str(db_path), retention_days=90)
+    store.record_sync(
+        UsageRecord(now_iso(), "fusion", None, None, None, "trends", "POST", "/mcp", "t", 200, "ok", 1),
+    )
+    store.close()
+    conn = sqlite3.connect(db_path)
+    assert conn.execute("SELECT tool FROM requests ORDER BY id").fetchall() == [(None,), ("t",)]
+    conn.close()
+
+
+async def test_products_only_reach_their_allowed_services(settings, upstreams):
+    settings.products["validation"] = ProductConfig(service_key_env="VALIDATION_SERVICE_KEY", services=["search"])
+    app = create_app(settings, {name: upstreams.transport(name) for name in ("image", "search", "reader", "trends")})
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gateway") as http:
+            denied = await http.post("/image/mcp", content=b"{}", headers=auth(VALIDATION_KEY))
+            allowed = await http.post("/search/search", json={}, headers=auth(VALIDATION_KEY))
+            # 没写 services 的产品仍可调用现有的基础服务。
+            default = await http.post("/image/mcp", content=b"{}", headers=auth())
+            # 公开资源不看产品的服务列表。
+            public = await http.get("/image/v1/health", headers=auth(VALIDATION_KEY))
+    assert denied.status_code == 403
+    assert denied.json()["error"] == "service_not_allowed"
+    assert allowed.status_code == 200
+    assert default.status_code == 200
+    assert public.status_code == 200
+    assert [request.headers.get("x-caller-app") for request in upstreams.requests["image"]] == ["fusion", None]
+    assert usage_rows(settings)[0]["app_id"] == "validation"
+    assert len(usage_rows(settings)) == 2
+
+
+def test_product_services_must_be_known():
+    with pytest.raises(ValueError, match="unknown services"):
+        Settings(
+            _env_file=None,
+            products={"fusion": ProductConfig(service_key_env="FUSION_SERVICE_KEY", services=["search", "weather"])},
+        )
 
 
 async def test_generated_images_are_public_and_not_recorded(client, upstreams, settings):

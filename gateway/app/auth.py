@@ -54,6 +54,12 @@ def _optional(headers: Headers, name: str, pattern: re.Pattern[str]) -> str | No
     return value
 
 
+def authorize_service(settings: Settings, caller: Caller, service: str) -> None:
+    """付费服务按产品放行：不在该产品 services 里的服务一律 403，不转发。"""
+    if service not in settings.allowed_services(caller.app_id):
+        raise AuthError(403, "service_not_allowed", f"This product is not allowed to call {service}.")
+
+
 def authenticate(settings: Settings, headers: Headers) -> Caller:
     """产品身份只来自服务密钥；用户、场景、请求 ID 由产品声明，只用于统计与关联。"""
     app_id = match_product(settings, headers.get("authorization", ""))
