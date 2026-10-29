@@ -46,6 +46,7 @@ _HEALTH_PATHS = {
     "amap": "health",
     "context7": "health",
     "weather": "health",
+    "flyai": "health",
 }
 logger = logging.getLogger("gateway")
 
