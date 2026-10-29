@@ -40,18 +40,22 @@ class Settings(BaseSettings):
     reader_upstream: str = "http://reader-service:8091"
     # TrendRadar 官方 MCP 镜像，只读 dev 上 TrendRadar 抓取的热榜数据。
     trends_upstream: str = "http://trends-mcp:3333"
+    # 高德官方 MCP 的代理（注入密钥、只读白名单），付费服务，不在产品默认放行列表里。
+    amap_upstream: str = "http://amap-mcp:3334"
 
     # 超时要大于调用方自己的超时，由调用方决定放弃；image-service 内部总预算 135s。
     image_timeout_seconds: float = 180
     search_timeout_seconds: float = 30
     reader_timeout_seconds: float = 30
     trends_timeout_seconds: float = 60
+    amap_timeout_seconds: float = 60
 
     # 按服务分开的连接池：某个服务堆积慢请求时只占满自己的池，不拖住其他服务。
     image_max_connections: int = 16
     search_max_connections: int = 32
     reader_max_connections: int = 32
     trends_max_connections: int = 16
+    amap_max_connections: int = 16
     # 池满时排队等待的上限，超过即返回 503。
     pool_wait_seconds: float = 5
 
@@ -86,4 +90,5 @@ class Settings(BaseSettings):
             "search": Upstream("search", s.search_upstream, s.search_timeout_seconds, s.search_max_connections),
             "reader": Upstream("reader", s.reader_upstream, s.reader_timeout_seconds, s.reader_max_connections),
             "trends": Upstream("trends", s.trends_upstream, s.trends_timeout_seconds, s.trends_max_connections),
+            "amap": Upstream("amap", s.amap_upstream, s.amap_timeout_seconds, s.amap_max_connections),
         }

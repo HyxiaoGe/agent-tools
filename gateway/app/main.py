@@ -39,7 +39,7 @@ def _configure_logging() -> None:
 
 
 # 各服务的健康检查：search / reader 只在专用网络里，监控只能经网关探测。
-_HEALTH_PATHS = {"image": "v1/health", "search": "health", "reader": "health"}
+_HEALTH_PATHS = {"image": "v1/health", "search": "health", "reader": "health", "amap": "health"}
 logger = logging.getLogger("gateway")
 
 
