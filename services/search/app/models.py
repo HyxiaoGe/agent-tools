@@ -95,3 +95,26 @@ class ProviderBudgetStatus(BaseModel):
     used: int
     rejected: int
     available: bool = True
+
+
+class DailyProviderUsage(BaseModel):
+    provider: str
+    # primary / fallback / other：按当前配置判断，不是当天的历史配置
+    role: str
+    registered: bool
+    limit: int | None = None
+    used: int = 0
+    rejected: int = 0
+
+
+class DailyUsageSummary(BaseModel):
+    """某个北京时间自然日的上游用量，供网关日报读取。计数只保留 3 天，更早的日期全是 0。"""
+
+    day: str
+    # Redis 读不到时为 False，此时各计数都是 0，不代表当天没用量
+    available: bool
+    providers: list[DailyProviderUsage]
+    fallback: dict[str, int]
+    # Firecrawl 剩余 credits 是查询时的当前值，与 day 无关；查不到时为 None
+    firecrawl_remaining_credits: int | None = None
+    firecrawl_billing_period_end: str | None = None

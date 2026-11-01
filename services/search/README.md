@@ -59,6 +59,7 @@ Response:
 | GET | `/health` | Health check |
 | GET | `/providers` | List available providers |
 | GET | `/usage/budget` | Today's (Asia/Shanghai) calls / limit / rejected count per budgeted provider |
+| GET | `/usage/daily?day=YYYY-MM-DD` | One day's upstream calls per provider (with role), fallback count by reason, current Firecrawl credits. Read by the gateway daily report; counters are kept for 3 days |
 | GET | `/usage/firecrawl` | Firecrawl credit usage; returns `available=false` with null credit fields when `FIRECRAWL_API_KEY` is unset |
 | GET | `/usage/firecrawl/historical?by_api_key=true` | Historical Firecrawl credit usage; API keys are masked when grouped by key |
 | DELETE | `/cache` | Flush cache |
@@ -106,8 +107,6 @@ See [.env.example](.env.example) for all available options.
 | `PROVIDER_DAILY_LIMITS` | `brave=100,tavily=100,firecrawl=500,deepseek=1000` | Daily upstream call cap per provider (Asia/Shanghai day). Each real upstream call (primary, fallback or MCP) takes one slot; cache hits are free. Over the cap the provider is skipped; if every candidate is exhausted `/search` returns 503. Unlisted providers are unlimited, `0` disables a provider |
 | `BUDGET_ALERT_RATIO` | `0.8` | Send a warning once usage reaches this share of the cap (once per provider per day), plus one alert when the cap is hit |
 | `BUDGET_ALERT_WEBHOOK` / `BUDGET_ALERT_SIGN_SECRET` | — | Feishu custom bot webhook and signing secret for budget alerts; empty = log only |
-| `DAILY_REPORT_WEBHOOK` / `DAILY_REPORT_SIGN_SECRET` | — | Feishu custom-bot webhook and signing secret for the daily usage report; empty disables the report |
-| `DAILY_REPORT_HOUR` | `9` | Asia/Shanghai hour after which the previous day's report is sent (once per day; restarts don't resend). Manual run: `python -m app.daily_report [--day YYYY-MM-DD] [--print] [--test]` |
 
 ## Tech Stack
 

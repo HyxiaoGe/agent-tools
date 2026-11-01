@@ -117,13 +117,12 @@ async def _alert_once(provider: str, kind: str, day: str, text: str) -> None:
         log.warning("provider_budget_alert_failed", provider=provider, kind=kind, error=str(exc))
 
 
-async def send_feishu_text(text: str, *, webhook: str | None = None, secret: str | None = None) -> bool:
-    """发飞书自定义机器人文本消息，飞书返回 code 0 时为 True。默认发到额度告警群（巡检群）。"""
-    url = (settings.BUDGET_ALERT_WEBHOOK if webhook is None else webhook).strip()
+async def send_feishu_text(text: str) -> None:
+    url = settings.BUDGET_ALERT_WEBHOOK.strip()
     if not url:
-        return False
+        return
     payload: dict = {"msg_type": "text", "content": {"text": text}}
-    secret = (settings.BUDGET_ALERT_SIGN_SECRET if secret is None else secret).strip()
+    secret = settings.BUDGET_ALERT_SIGN_SECRET.strip()
     if secret:
         timestamp = str(int(time.time()))
         string_to_sign = f"{timestamp}\n{secret}".encode()
@@ -135,11 +134,9 @@ async def send_feishu_text(text: str, *, webhook: str | None = None, secret: str
         body = resp.json()
     if body.get("code", 0) != 0:
         log.warning("feishu_alert_rejected", code=body.get("code"), msg=body.get("msg"))
-        return False
-    return True
 
 
-# 转备用的次数，按触发原因分开计：主 provider 报错 / 结果不足。只用于日报统计，不参与额度判断。
+# 转备用的次数，按触发原因分开计：主 provider 报错 / 结果不足。只用于用量统计（网关日报经 /usage/daily 读取），不参与额度判断。
 FALLBACK_REASONS = ("error", "insufficient")
 
 

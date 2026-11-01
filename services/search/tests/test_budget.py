@@ -342,3 +342,79 @@ async def test_budget_status_reports_used_and_rejected(monkeypatch, budget_env):
     assert status["brave"].limit == 2
     assert status["deepseek"].used == 0
     assert status["deepseek"].day == "2026-11-01"
+
+
+async def test_record_fallback_counts_by_reason(monkeypatch, budget_env):
+    budget, _redis, _sent = budget_env
+
+    await budget.record_fallback("error")
+    await budget.record_fallback("insufficient")
+    await budget.record_fallback("insufficient")
+
+    assert await budget.get_fallback_counts("2026-11-01") == {"error": 1, "insufficient": 2}
+
+
+def _patch_daily_usage(monkeypatch, *, registered=("tavily", "firecrawl", "deepseek"), firecrawl_error=None):
+    from app.models import ProviderUsageResponse
+    from app.routes import admin
+
+    async def fake_firecrawl_usage():
+        if firecrawl_error is not None:
+            raise firecrawl_error
+        return ProviderUsageResponse(
+            provider="firecrawl",
+            available=True,
+            remaining_credits=69797,
+            billing_period_end="2026-11-22T21:35:09.173Z",
+        )
+
+    monkeypatch.setattr(admin, "list_providers", lambda: [{"name": n, "available": True} for n in registered])
+    monkeypatch.setattr(admin, "get_firecrawl_usage", fake_firecrawl_usage)
+    monkeypatch.setattr(admin.settings, "SEARCH_PROVIDER", "deepseek")
+    monkeypatch.setattr(admin.settings, "SEARCH_FALLBACK_PROVIDERS", "firecrawl,tavily")
+    monkeypatch.setattr(admin.settings, "PROVIDER_DAILY_LIMITS", "brave=100,tavily=100,firecrawl=500,deepseek=1000")
+    return admin
+
+
+async def test_daily_usage_reports_providers_in_role_order_with_fallbacks(monkeypatch, budget_env):
+    from datetime import date
+
+    _budget, redis, _sent = budget_env
+    admin = _patch_daily_usage(monkeypatch)
+    redis.values["budget:deepseek:calls:day:2026-10-31"] = 312
+    redis.values["budget:firecrawl:calls:day:2026-10-31"] = 12
+    redis.values["budget:tavily:rejected:day:2026-10-31"] = 2
+    redis.values["stats:fallback:error:day:2026-10-31"] = 2
+    redis.values["stats:fallback:insufficient:day:2026-10-31"] = 8
+
+    summary = await admin.daily_usage(date(2026, 10, 31))
+
+    assert summary.day == "2026-10-31"
+    assert summary.available is True
+    assert [(p.provider, p.role, p.registered, p.limit, p.used, p.rejected) for p in summary.providers] == [
+        ("deepseek", "primary", True, 1000, 312, 0),
+        ("firecrawl", "fallback", True, 500, 12, 0),
+        ("tavily", "fallback", True, 100, 0, 2),
+        # brave 只在额度配置里、没有注册
+        ("brave", "other", False, 100, 0, 0),
+    ]
+    assert summary.fallback == {"error": 2, "insufficient": 8}
+    assert summary.firecrawl_remaining_credits == 69797
+    assert summary.firecrawl_billing_period_end == "2026-11-22T21:35:09.173Z"
+
+
+async def test_daily_usage_marks_unavailable_when_redis_is_down(monkeypatch):
+    from app import budget
+
+    async def broken_redis():
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(budget, "get_redis", broken_redis)
+    admin = _patch_daily_usage(monkeypatch, firecrawl_error=TimeoutError())
+
+    summary = await admin.daily_usage(None)
+
+    assert summary.available is False
+    assert summary.fallback == {"error": 0, "insufficient": 0}
+    assert all(p.used == 0 for p in summary.providers)
+    assert summary.firecrawl_remaining_credits is None

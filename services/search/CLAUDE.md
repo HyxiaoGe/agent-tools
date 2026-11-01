@@ -11,7 +11,6 @@ app/
   models.py        -- SearchRequest, SearchResponse, SearchType
   cache.py         -- Redis cache (get/set/flush, TTL per search type)
   budget.py        -- per-provider daily call budget (Redis counters, Feishu alerts, 503 when exhausted)
-  daily_report.py  -- daily usage report to Feishu (AI cost group); scheduled in lifespan, `python -m app.daily_report` to run manually
   limiter.py       -- slowapi rate limiter
   logger.py        -- structlog setup (JSON in prod, console in debug)
   providers/
@@ -29,7 +28,6 @@ app/
 tests/
   test_search.py   -- model / provider / route unit tests
   test_budget.py   -- daily budget guard
-  test_daily_report.py -- daily report timing, format, dedupe
   test_fallback_chain.py -- fallback chain ordering and route behaviour
 ```
 
