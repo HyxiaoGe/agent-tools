@@ -786,3 +786,47 @@ async def test_firecrawl_freshness_and_domain_params_map(monkeypatch, freshness:
         "tbs": expected_tbs,
         "includeDomains": ["example.com", "openai.com"],
     }
+
+
+def test_registry_skips_brave_without_key_and_falls_back_to_next_provider(monkeypatch):
+    from app.providers import registry
+
+    registry._providers.clear()
+    monkeypatch.setattr(registry.settings, "BRAVE_API_KEY", "")
+    monkeypatch.setattr(registry.settings, "TAVILY_API_KEY", "tvly-test-key")
+    monkeypatch.setattr(registry.settings, "FIRECRAWL_API_KEY", "fc-test-key")
+    monkeypatch.setattr(registry.settings, "DEEPSEEK_API_KEY", "sk-test-key")
+
+    names = [p["name"] for p in registry.list_providers()]
+    fallback_name, _ = registry.get_fallback_provider("deepseek")
+
+    assert "brave" not in names
+    assert fallback_name == "tavily"
+    with pytest.raises(ValueError, match="Unknown provider"):
+        registry.get_provider("brave")
+    registry._providers.clear()
+
+
+def test_registry_registers_brave_when_key_is_present(monkeypatch):
+    from app.providers import registry
+
+    registry._providers.clear()
+    monkeypatch.setattr(registry.settings, "BRAVE_API_KEY", "brave-test-key")
+    monkeypatch.setattr(registry.settings, "TAVILY_API_KEY", "")
+    monkeypatch.setattr(registry.settings, "FIRECRAWL_API_KEY", "")
+    monkeypatch.setattr(registry.settings, "DEEPSEEK_API_KEY", "")
+
+    assert registry.get_provider("brave").api_key == "brave-test-key"
+    registry._providers.clear()
+
+
+async def test_tavily_rejects_image_search_without_calling_upstream(monkeypatch):
+    from app.providers import tavily
+
+    def no_client(*_args, **_kwargs):
+        raise AssertionError("图片搜索不应请求 Tavily")
+
+    monkeypatch.setattr(tavily.httpx, "AsyncClient", no_client)
+
+    with pytest.raises(ValueError, match="does not support image search"):
+        await tavily.TavilyProvider().search(SearchRequest(query="猫", type=SearchType.IMAGE))
