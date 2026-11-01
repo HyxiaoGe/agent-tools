@@ -20,6 +20,7 @@ AI image generation middleware. Wraps Google Gemini, Volcengine Seedream and Ali
 - Time budget: 135s per request across all models (see README "总等待预算与取消"); a timed-out model is never resent, connect errors retry within the budget
 - Cache TTL: 7 days; thundering-herd protection via Redis locks
 - Shared REST/MCP admission: 20 global / 20 per-product / 5 per-subject per 60s; concurrency 6 / 4 / 2, Redis atomic admission, bounded leases
+- Per-provider daily quota (`PROVIDER_DAILY_LIMITS`, `src/services/quota.py`): reserve a slot right before every upstream request (cache hits don't); a used-up model provider raises `quota_exceeded` and falls back like `upstream_unavailable`; Tavily reference search is skipped. Redis errors fail closed. Never call a provider without going through `_call_model` / `find_references`, or the quota is skipped
 
 ## Dev commands
 

@@ -62,6 +62,7 @@
 | REST | `POST /v1/generate`、`GET /v1/models`、`GET /v1/health` |
 | MCP | `generate_image`、`list_models`（路径 `/mcp`） |
 | 费用查询 | `GET /v1/usage`（用量与标价估算）、`GET /v1/billing?bill_period=YYYY-MM`（官方月度分账） |
+| 每日额度 | `GET /v1/quota?day=YYYY-MM-DD`（各上游当天调用 / 被拦次数与上限，不需要密钥，见[每日上游额度](#每日上游额度)） |
 
 产品身份、多方舟 Key、持久化用量和统一限流见[产品归因接入说明](docs/PRODUCT_ATTRIBUTION.md)。各产品用自己的服务密钥调用、由密钥决定产品和方舟 Key；默认且仅支持严格产品密钥认证，匿名和旧共享 Key 均被拒绝。
 
@@ -153,13 +154,31 @@ DEFAULT_FALLBACK_MODEL=gemini-nano-banana-2.1,qwen-image-3.0
 
 - 所有值必须是 `GET /v1/models` 里的模型 ID；备用列表不能包含 `DEFAULT_MODEL`，也不能重复。填错时服务启动失败，日志会写明是哪个变量。
 - 未设置 `DEFAULT_FALLBACK_MODEL` 时，内置备用链会去掉已经选作默认主模型的那一项，兼容仍显式使用 Gemini 的现有部署；显式配置的备用列表仍按上一条严格校验。
-- 触发换下一个模型的情况：被内容审核拦截（`content_filtered`），或上游不可用（`upstream_unavailable`：402 余额用尽、方舟 403 欠费错误、429、5xx、连不上）。按列表顺序逐个尝试，某个成功就停；全部失败时返回最后一个模型的错误，`fallback_from` 写明主模型最初的失败原因。
+- 触发换下一个模型的情况：被内容审核拦截（`content_filtered`），上游不可用（`upstream_unavailable`：402 余额用尽、方舟 403 欠费错误、429、5xx、连不上），或该模型所属上游当天的额度已用满（`quota_exceeded`，不会请求上游，见[每日上游额度](#每日上游额度)）。按列表顺序逐个尝试，某个成功就停；全部失败时返回最后一个模型的错误，`fallback_from` 写明主模型最初的失败原因。
 - 生图提交后的读写超时或单模型期限耗尽：不重发同一模型；有备用且总预算仍足够时尝试下一个模型。已提交的超时请求仍可能在供应商侧继续生成和计费，切备用可能产生额外费用；传 `fallback_model="none"` 可关闭备用。
 - 请求参数错误、响应途中连接异常，以及 Qwen 已生成图片后的结果下载失败 / 超时，不继续生成备用图片。建立连接前的超时和连接失败仍最多重试两次，但包含在单模型和请求总预算内。
 - 列表里不适用的模型会自动跳过，不报错：调用方选的模型恰好就是它，或者它不支持所请求的比例（例如 Seedream 主力请求 7:5，Gemini 备用不支持）。
 - 调用方传 `fallback_model` 时只用它这一个模型（同样的触发规则）；传 `"none"` 关闭本次请求的备用。
 - 备用列表参与缓存 key，所以修改 `DEFAULT_FALLBACK_MODEL` 后，已有缓存不会再被命中，同样的请求会重新生成一次。
 - 返回里的 `model` 是实际出图的模型，`requested_model` 是请求的模型，`fallback_used` 表示是否走了备用；日志 `fallback_tried` 记录依次失败的模型和原因。
+
+### 每日上游额度
+
+兜底防止批量实验或失控循环把付费上游打穿。`PROVIDER_DAILY_LIMITS`（`上游=次数`，逗号分隔，北京时间自然日）：
+
+| 上游 | 计哪些调用 | 默认上限 |
+|---|---|---:|
+| `volcano` | Seedream（方舟） | 100 |
+| `google` | Gemini（经 LiteLLM） | 50 |
+| `alibaba` | Qwen-Image（百炼） | 50 |
+| `tavily` | `reference_subject` 自动找参考图的搜索 | 100 |
+
+- 默认值约为 10-23 ~ 11-01 单日生图峰值（8 次）的 6~12 倍；网关另有 `image=200` 的每日总上限。参考图评审用的 LiteLLM 小模型不计。
+- 每次真正请求上游前占一个名额，缓存命中不占；同一模型连接失败的重试不另占。未列出的上游不限但照样计数，`0` 表示当天不调；写了未知上游名，服务起不来。
+- 生图模型的上游用满时返回 `quota_exceeded`，按备用链换下一个模型；全部用满时返回 HTTP 429 `quota_exceeded`（`retryable: false`，`Retry-After` 为距北京时间 0 点的秒数）。Tavily 用满时跳过找图（`reference_search.status = search_failed`），照常出图。
+- 计数存在 Redis（`quota:image:v1:*`，保留 3 天）；Redis 出错时不放行，返回 `admission_unavailable`。
+- 用到 `QUOTA_ALERT_RATIO`（默认 0.8）和用满时各推一次飞书巡检群（`QUOTA_ALERT_WEBHOOK` / `QUOTA_ALERT_SIGN_SECRET`，留空只写日志）。
+- `GET /v1/quota?day=YYYY-MM-DD`（默认今天）返回各上游的 `limit` / `used` / `rejected`，网关日报读它。只有计数、不需要密钥，和 `/metrics` 一样只在内网可达。
 
 ### 总等待预算与取消
 

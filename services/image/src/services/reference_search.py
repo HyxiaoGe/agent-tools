@@ -25,6 +25,7 @@ import structlog
 
 from src.config import Settings
 from src.services.metrics import REFERENCE_SEARCHES
+from src.services.quota import QuotaExceeded, QuotaUnavailable, reserve
 from src.services.references import (
     ReferenceImage,
     ReferenceImageError,
@@ -411,6 +412,14 @@ async def find_references(
             )
             return _finish(outcome)
 
+    if _pool(settings).keys:
+        # 只有真要请求 Tavily 时才占名额；用满或计数不可用时跳过搜索，不影响生图。
+        try:
+            await reserve(redis, settings, "tavily")
+        except QuotaExceeded:
+            return _finish(SearchOutcome(status="search_failed", log={"reason": "daily_quota_exceeded"}))
+        except QuotaUnavailable:
+            return _finish(SearchOutcome(status="search_failed", log={"reason": "quota_unavailable"}))
     try:
         outcome = await _search(subject, settings, client)
     except SearchFailed as e:

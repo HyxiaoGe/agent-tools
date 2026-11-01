@@ -33,6 +33,7 @@ from src.services.metrics import (
     GENERATION_ERRORS,
     REQUEST_COUNT,
 )
+from src.services.quota import QuotaExceeded, QuotaUnavailable, provider_for_model, reserve, seconds_until_reset
 from src.services.reference_search import GENERATION_TTL, SearchOutcome, find_references
 from src.services.references import ReferenceImage, ReferenceImageError, _sniff_mime, image_size, load_reference_images
 from src.services.usage import UsageStore, ark_estimate, usage_store
@@ -116,6 +117,8 @@ _upstream_attempts: ContextVar[int] = ContextVar("upstream_attempts", default=0)
 # What Google Search did for the current request (queries, source count), when
 # grounding was on; read by the summary log.
 _search_stats: ContextVar[dict[str, object] | None] = ContextVar("search_stats", default=None)
+# 每日上游额度用的 Redis；由 _handle_generate 设置
+_quota_redis: ContextVar[object | None] = ContextVar("quota_redis", default=None)
 
 # Summary-log fields of the current request, so deeper steps can add what they
 # resolve (e.g. the effective fallback model).
@@ -832,6 +835,7 @@ async def _handle_generate(
     started = lifetime.started_at if lifetime is not None else time.monotonic()
     _upstream_attempts.set(0)
     _search_stats.set(None)
+    _quota_redis.set(cache.redis)
     if request.model:
         requested_model, model_source = request.model, "model"
     elif request.quality is not None:
@@ -1056,6 +1060,7 @@ async def _call_model(
                 "Not enough time remains to start this model.",
                 timeout_fallback_allowed=True,
             )
+        await _reserve_quota(model, settings)
         try:
             with GENERATION_DURATION.labels(model=model).time(), anyio.fail_after(timeout):
                 return await _invoke_model(request, model, settings, http_client, references)
@@ -1080,6 +1085,22 @@ async def _call_model(
         raise
     finally:
         _model_attempt.reset(token)
+
+
+async def _reserve_quota(model: str, settings: Settings) -> None:
+    """真正请求上游前占该上游的每日名额；用满时按 quota_exceeded 走备用链。"""
+    redis = _quota_redis.get()
+    if redis is None:
+        # 只有绕过 handle_generate 直接调内部函数（单元测试）时为空
+        return
+    try:
+        await reserve(redis, settings, provider_for_model(model))
+    except QuotaExceeded as e:
+        raise GenerationError(
+            ErrorCode.QUOTA_EXCEEDED, upstream_detail=str(e), retry_after=seconds_until_reset()
+        ) from None
+    except QuotaUnavailable:
+        raise GenerationError(ErrorCode.ADMISSION_UNAVAILABLE) from None
 
 
 async def _invoke_model(
@@ -1163,10 +1184,11 @@ async def _find_references(
 
 
 # Failures that move on to the next model: a moderation block, or the provider
-# being down (402 balance exhausted / 429 / 5xx / unreachable). Generation
+# being down (402 balance exhausted / 429 / 5xx / unreachable), or its daily
+# quota being used up (PROVIDER_DAILY_LIMITS, never sent upstream). Generation
 # timeouts can use a backup inside the remaining budget, but are never resent
 # to the same model. A submitted timed-out request may still be billed upstream.
-FALLBACK_CODES = frozenset({ErrorCode.CONTENT_FILTERED, ErrorCode.UPSTREAM_UNAVAILABLE})
+FALLBACK_CODES = frozenset({ErrorCode.CONTENT_FILTERED, ErrorCode.UPSTREAM_UNAVAILABLE, ErrorCode.QUOTA_EXCEEDED})
 
 
 def _falls_back(e: GenerationError) -> bool:
