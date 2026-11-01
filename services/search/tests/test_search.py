@@ -144,8 +144,8 @@ async def test_search_route_marks_fallback_provider_provenance(monkeypatch):
     monkeypatch.setattr(search_route, "get_provider", lambda _name=None: Provider(primary_response))
     monkeypatch.setattr(
         search_route,
-        "get_fallback_provider",
-        lambda _primary: ("tavily", Provider(fallback_response)),
+        "get_fallback_providers",
+        lambda _primary: [("tavily", Provider(fallback_response))],
     )
 
     request = Request(
@@ -205,7 +205,7 @@ async def test_search_route_records_firecrawl_credits_from_primary_response(monk
     monkeypatch.setattr(search_route, "get_cached", fake_get_cached)
     monkeypatch.setattr(search_route, "set_cached", fake_set_cached)
     monkeypatch.setattr(search_route, "get_provider", lambda _name=None: Provider())
-    monkeypatch.setattr(search_route, "get_fallback_provider", lambda _primary: (None, None))
+    monkeypatch.setattr(search_route, "get_fallback_providers", lambda _primary: [])
 
     request = Request(
         {
@@ -274,8 +274,8 @@ async def test_search_route_records_firecrawl_credits_even_when_later_fallback_w
     monkeypatch.setattr(search_route, "get_provider", lambda _name=None: Provider(primary_response))
     monkeypatch.setattr(
         search_route,
-        "get_fallback_provider",
-        lambda _primary: ("brave", Provider(fallback_response)),
+        "get_fallback_providers",
+        lambda _primary: [("brave", Provider(fallback_response))],
     )
 
     request = Request(
@@ -345,8 +345,8 @@ async def test_search_route_uses_fallback_when_primary_provider_raises(monkeypat
     )
     monkeypatch.setattr(
         search_route,
-        "get_fallback_provider",
-        lambda _primary: ("brave", Provider(fallback_response)),
+        "get_fallback_providers",
+        lambda _primary: [("brave", Provider(fallback_response))],
     )
 
     request = Request(
@@ -403,7 +403,7 @@ async def test_search_route_skips_cache_for_relaxed_freshness_results(monkeypatc
     monkeypatch.setattr(search_route, "get_cached", fake_get_cached)
     monkeypatch.setattr(search_route, "set_cached", fake_set_cached)
     monkeypatch.setattr(search_route, "get_provider", lambda _name=None: Provider())
-    monkeypatch.setattr(search_route, "get_fallback_provider", lambda _primary: (None, None))
+    monkeypatch.setattr(search_route, "get_fallback_providers", lambda _primary: [])
 
     request = Request(
         {
@@ -453,14 +453,14 @@ async def test_search_route_does_not_fallback_when_relaxed_firecrawl_results_are
     async def fake_set_cached(*args):
         cached_calls.append(args)
 
-    def fake_get_fallback_provider(primary: str):
+    def fake_get_fallback_providers(primary: str):
         fallback_calls.append(primary)
-        return None, None
+        return []
 
     monkeypatch.setattr(search_route, "get_cached", fake_get_cached)
     monkeypatch.setattr(search_route, "set_cached", fake_set_cached)
     monkeypatch.setattr(search_route, "get_provider", lambda _name=None: Provider())
-    monkeypatch.setattr(search_route, "get_fallback_provider", fake_get_fallback_provider)
+    monkeypatch.setattr(search_route, "get_fallback_providers", fake_get_fallback_providers)
 
     request = Request(
         {
@@ -796,12 +796,14 @@ def test_registry_skips_brave_without_key_and_falls_back_to_next_provider(monkey
     monkeypatch.setattr(registry.settings, "TAVILY_API_KEY", "tvly-test-key")
     monkeypatch.setattr(registry.settings, "FIRECRAWL_API_KEY", "fc-test-key")
     monkeypatch.setattr(registry.settings, "DEEPSEEK_API_KEY", "sk-test-key")
+    monkeypatch.setattr(registry.settings, "SEARCH_FALLBACK_PROVIDERS", "")
 
     names = [p["name"] for p in registry.list_providers()]
-    fallback_name, _ = registry.get_fallback_provider("deepseek")
+    fallbacks = [name for name, _ in registry.get_fallback_providers("deepseek")]
 
     assert "brave" not in names
-    assert fallback_name == "tavily"
+    # 未配置备用链时沿用旧行为：注册顺序里第一个非主 provider
+    assert fallbacks == ["tavily"]
     with pytest.raises(ValueError, match="Unknown provider"):
         registry.get_provider("brave")
     registry._providers.clear()

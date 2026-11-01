@@ -91,6 +91,7 @@ See [.env.example](.env.example) for all available options.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SEARCH_PROVIDER` | `brave` | Active search provider |
+| `SEARCH_FALLBACK_PROVIDERS` | _(empty)_ | Comma-separated fallback chain, e.g. `firecrawl,tavily`. Tried in order when the primary errors or returns fewer than `count/2` results; stops at the first provider with enough results. The primary itself and providers without an API key are skipped; unknown names fail startup. Empty = first registered provider other than the primary |
 | `BRAVE_API_KEY` | — | Brave Search API key |
 | `TAVILY_API_KEY` | — | Tavily Search API key |
 | `FIRECRAWL_API_KEY` | — | Firecrawl API key |

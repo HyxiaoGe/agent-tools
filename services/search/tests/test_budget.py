@@ -231,7 +231,7 @@ def _patch_route(monkeypatch, primary, fallback_name, fallback):
     monkeypatch.setattr(search_route, "get_cached", no_cache)
     monkeypatch.setattr(search_route, "set_cached", no_cache)
     monkeypatch.setattr(search_route, "get_provider", lambda _name=None: primary)
-    monkeypatch.setattr(search_route, "get_fallback_provider", lambda _primary: (fallback_name, fallback))
+    monkeypatch.setattr(search_route, "get_fallback_providers", lambda _primary: [(fallback_name, fallback)])
     return search_route
 
 

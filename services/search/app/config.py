@@ -23,11 +23,31 @@ def parse_daily_limits(raw: str) -> dict[str, int]:
     return limits
 
 
+KNOWN_PROVIDERS = ("brave", "tavily", "firecrawl", "deepseek")
+
+
+def parse_provider_list(raw: str) -> list[str]:
+    """解析 `firecrawl,tavily`：去空格、转小写、去重保序；出现未知 provider 名直接报错。"""
+    names: list[str] = []
+    for part in raw.split(","):
+        name = part.strip().lower()
+        if not name:
+            continue
+        if name not in KNOWN_PROVIDERS:
+            raise ValueError(f"SEARCH_FALLBACK_PROVIDERS 含未知 provider: {name!r}，可选 {', '.join(KNOWN_PROVIDERS)}")
+        if name not in names:
+            names.append(name)
+    return names
+
+
 class Settings(BaseSettings):
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     # Provider
     SEARCH_PROVIDER: str = "brave"
+    # 备用链：主 provider 报错或结果不足时按顺序尝试，够数即停；自动跳过主 provider 和未配置 key 的。
+    # 留空时沿用旧行为：注册顺序里第一个非主 provider。
+    SEARCH_FALLBACK_PROVIDERS: str = ""
     BRAVE_API_KEY: str = ""
     TAVILY_API_KEY: str = ""
     FIRECRAWL_API_KEY: str = ""
@@ -70,6 +90,13 @@ class Settings(BaseSettings):
     def _validate_daily_limits(cls, value: str) -> str:
         # 配错就让服务起不来，比静默不限额安全。
         parse_daily_limits(value)
+        return value
+
+    @field_validator("SEARCH_FALLBACK_PROVIDERS")
+    @classmethod
+    def _validate_fallback_providers(cls, value: str) -> str:
+        # 拼错 provider 名会让备用链悄悄变短，启动时就拦下。
+        parse_provider_list(value)
         return value
 
 

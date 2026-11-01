@@ -15,7 +15,7 @@ app/
   logger.py        -- structlog setup (JSON in prod, console in debug)
   providers/
     base.py        -- SearchProvider protocol
-    registry.py    -- provider init, get/fallback/list (every provider wrapped by BudgetGuardedProvider)
+    registry.py    -- provider init, get/fallback chain/list (every provider wrapped by BudgetGuardedProvider)
     brave.py       -- Brave Search API
     tavily.py      -- Tavily Search API
     firecrawl.py   -- Firecrawl Search API
@@ -26,7 +26,9 @@ app/
   mcp/
     server.py      -- FastMCP tools: search, search_news, search_images
 tests/
-  test_search.py   -- model unit tests
+  test_search.py   -- model / provider / route unit tests
+  test_budget.py   -- daily budget guard
+  test_fallback_chain.py -- fallback chain ordering and route behaviour
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed layer descriptions.
@@ -56,4 +58,4 @@ Port: 8080. Redis required (see docker-compose.yml).
 
 ## Environment
 
-Copy `.env.example` to `.env`. Providers are registered only when their API key is set (Brave included); the fallback is the first registered provider other than the primary, in order brave → tavily → firecrawl → deepseek.
+Copy `.env.example` to `.env`. Providers are registered only when their API key is set (Brave included); the fallback chain comes from `SEARCH_FALLBACK_PROVIDERS` (tried in order, stops once results are sufficient; skips the primary and providers without a key). If unset, it is the first registered provider other than the primary (registration order brave → tavily → firecrawl → deepseek).
