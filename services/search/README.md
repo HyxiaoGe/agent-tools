@@ -58,6 +58,7 @@ Response:
 |--------|------|-------------|
 | GET | `/health` | Health check |
 | GET | `/providers` | List available providers |
+| GET | `/usage/budget` | Today's (Asia/Shanghai) calls / limit / rejected count per budgeted provider |
 | GET | `/usage/firecrawl` | Firecrawl credit usage; returns `available=false` with null credit fields when `FIRECRAWL_API_KEY` is unset |
 | GET | `/usage/firecrawl/historical?by_api_key=true` | Historical Firecrawl credit usage; API keys are masked when grouped by key |
 | DELETE | `/cache` | Flush cache |
@@ -101,6 +102,9 @@ See [.env.example](.env.example) for all available options.
 | `CACHE_TTL_NEWS` | `300` | News search cache TTL (seconds) |
 | `RATE_LIMIT_GLOBAL` | `40/second` | Global rate limit |
 | `RATE_LIMIT_PER_IP` | `10/second` | Per-IP rate limit |
+| `PROVIDER_DAILY_LIMITS` | `brave=100,tavily=100,firecrawl=500,deepseek=1000` | Daily upstream call cap per provider (Asia/Shanghai day). Each real upstream call (primary, fallback or MCP) takes one slot; cache hits are free. Over the cap the provider is skipped; if every candidate is exhausted `/search` returns 503. Unlisted providers are unlimited, `0` disables a provider |
+| `BUDGET_ALERT_RATIO` | `0.8` | Send a warning once usage reaches this share of the cap (once per provider per day), plus one alert when the cap is hit |
+| `BUDGET_ALERT_WEBHOOK` / `BUDGET_ALERT_SIGN_SECRET` | — | Feishu custom bot webhook and signing secret for budget alerts; empty = log only |
 
 ## Tech Stack
 

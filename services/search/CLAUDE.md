@@ -10,11 +10,12 @@ app/
   config.py        -- pydantic-settings (Settings from .env)
   models.py        -- SearchRequest, SearchResponse, SearchType
   cache.py         -- Redis cache (get/set/flush, TTL per search type)
+  budget.py        -- per-provider daily call budget (Redis counters, Feishu alerts, 503 when exhausted)
   limiter.py       -- slowapi rate limiter
   logger.py        -- structlog setup (JSON in prod, console in debug)
   providers/
     base.py        -- SearchProvider protocol
-    registry.py    -- provider init, get/fallback/list
+    registry.py    -- provider init, get/fallback/list (every provider wrapped by BudgetGuardedProvider)
     brave.py       -- Brave Search API
     tavily.py      -- Tavily Search API
     firecrawl.py   -- Firecrawl Search API
@@ -37,6 +38,7 @@ See [docs/CODING_CONVENTIONS.md](docs/CODING_CONVENTIONS.md) for code style rule
 - Routes must not import providers directly -- use registry
 - MCP tools must not import routes -- call providers/cache directly
 - No cross-imports between providers
+- Paid upstream calls are capped per day by `PROVIDER_DAILY_LIMITS`; never bypass `registry` (that would skip the budget)
 
 ## Dev Commands
 

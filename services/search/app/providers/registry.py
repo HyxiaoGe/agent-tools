@@ -3,6 +3,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from app.budget import BudgetGuardedProvider
 from app.cache import get_redis
 from app.config import settings
 from app.logger import get_logger
@@ -29,13 +30,14 @@ class ProviderUsageError(Exception):
 
 
 def _init_providers() -> None:
-    _providers["brave"] = BraveProvider()
+    # 统一套上每日额度包装：路由主调用、fallback、MCP 都从这里取 provider，不会绕过额度。
+    _providers["brave"] = BudgetGuardedProvider("brave", BraveProvider())
     if settings.TAVILY_API_KEY:
-        _providers["tavily"] = TavilyProvider()
+        _providers["tavily"] = BudgetGuardedProvider("tavily", TavilyProvider())
     if settings.FIRECRAWL_API_KEY:
-        _providers["firecrawl"] = FirecrawlProvider()
+        _providers["firecrawl"] = BudgetGuardedProvider("firecrawl", FirecrawlProvider())
     if settings.DEEPSEEK_API_KEY:
-        _providers["deepseek"] = DeepSeekProvider()
+        _providers["deepseek"] = BudgetGuardedProvider("deepseek", DeepSeekProvider())
 
 
 def get_provider(name: str | None = None) -> SearchProvider:

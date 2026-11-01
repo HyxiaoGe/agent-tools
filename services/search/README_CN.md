@@ -58,6 +58,7 @@ curl -X POST http://localhost:8080/search \
 |------|------|------|
 | GET | `/health` | 健康检查 |
 | GET | `/providers` | 列出可用的搜索 Provider |
+| GET | `/usage/budget` | 各限额 provider 今日（北京时间）已用 / 上限 / 被拒次数 |
 | GET | `/usage/firecrawl` | Firecrawl credits 使用情况；未配置 `FIRECRAWL_API_KEY` 时返回 `available=false` 且 credits 字段为 null |
 | GET | `/usage/firecrawl/historical?by_api_key=true` | Firecrawl 历史 credits 使用情况；按 key 分组时会脱敏 API key |
 | DELETE | `/cache` | 清空缓存 |
@@ -101,6 +102,9 @@ Claude Code 集成配置：
 | `CACHE_TTL_NEWS` | `300` | 新闻搜索缓存时间（秒） |
 | `RATE_LIMIT_GLOBAL` | `40/second` | 全局限流 |
 | `RATE_LIMIT_PER_IP` | `10/second` | 单 IP 限流 |
+| `PROVIDER_DAILY_LIMITS` | `brave=100,tavily=100,firecrawl=500,deepseek=1000` | 每个 provider 每日上游调用上限（北京时间自然日）。主调用、fallback、MCP 每次真正请求上游都占一个名额，缓存命中不占。超额后跳过该 provider，所有候选都没额度时 `/search` 返回 503。未列出的 provider 不限，`0` 表示停用 |
+| `BUDGET_ALERT_RATIO` | `0.8` | 用量达到上限的这个比例时预警一次（每个 provider 每天一次），达到上限时再告警一次 |
+| `BUDGET_ALERT_WEBHOOK` / `BUDGET_ALERT_SIGN_SECRET` | — | 额度告警用的飞书自定义机器人 webhook 与签名密钥；留空只写日志 |
 
 ## 技术栈
 
