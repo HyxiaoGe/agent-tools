@@ -142,8 +142,8 @@ def _search_lines(summary: dict | None, gateway_search_calls: int) -> list[str]:
         detail = f"（报错 {fallback.get('error', 0)}，结果不足 {fallback.get('insufficient', 0)}）" if total else ""
         lines.append(f"· 转备用 {total} 次{detail}")
     elif gateway_search_calls:
-        # 有请求却没有任何上游计数：计数还没上线，或者已经超过 search 的 3 天保留期。
-        lines.append("search 上游：当天没有上游计数（search 只保留 3 天）")
+        # 有请求却没有任何上游计数：通常是全部命中缓存（缓存命中不占额度）；手动查 3 天前的日期时计数已过期。
+        lines.append("search 上游：没有调用上游（全部命中缓存，或计数已过 3 天保留期）")
     credits = summary.get("firecrawl_remaining_credits")
     if credits is not None:
         period_end = _beijing_mmdd(summary.get("firecrawl_billing_period_end"))
