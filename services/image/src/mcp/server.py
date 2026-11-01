@@ -152,6 +152,8 @@ async def generate_image(
     REST and MCP share per-product/user request and concurrency limits, including
     cache hits. On rate_limited, wait error.retry_after seconds before retrying;
     do not repeatedly switch entry points or retry without a bound.
+    On quota_exceeded, every model left to try has used up its provider's daily
+    quota; do not retry today (it resets at 00:00 Asia/Shanghai).
     """
     if _settings is None or _cache is None:
         return _error_result(ErrorCode.CONFIG_MISSING, "MCP server not initialized")

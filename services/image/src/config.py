@@ -162,6 +162,33 @@ SUPPORTED_MODELS: dict[str, ModelInfo] = {
     ),
 }
 
+# 每日额度按上游计：模型的 provider → 额度名；tavily 是参考图搜索。
+PROVIDER_NAMES = {"Volcano": "volcano", "Google": "google", "Alibaba": "alibaba"}
+QUOTA_PROVIDERS = (*PROVIDER_NAMES.values(), "tavily")
+
+
+def parse_provider_limits(raw: str) -> dict[str, int]:
+    """解析 `volcano=100,google=50`；未列出的上游不限，0 表示当天不调。"""
+    limits: dict[str, int] = {}
+    for part in raw.split(","):
+        entry = part.strip()
+        if not entry:
+            continue
+        name, sep, value = entry.partition("=")
+        name = name.strip().lower()
+        if not sep or not name:
+            raise ValueError(f"PROVIDER_DAILY_LIMITS entries must look like provider=count: {entry!r}")
+        if name not in QUOTA_PROVIDERS:
+            raise ValueError(f"PROVIDER_DAILY_LIMITS has unknown provider {name!r}; use {', '.join(QUOTA_PROVIDERS)}")
+        try:
+            limit = int(value.strip())
+        except ValueError:
+            raise ValueError(f"PROVIDER_DAILY_LIMITS count must be an integer: {entry!r}") from None
+        if limit < 0:
+            raise ValueError(f"PROVIDER_DAILY_LIMITS count must not be negative: {entry!r}")
+        limits[name] = limit
+    return limits
+
 
 class ProductConfig(BaseModel):
     """凭证仅引用服务端环境变量；别名可安全用于日志和分账。"""
@@ -243,6 +270,25 @@ class Settings(BaseSettings):
     tavily_api_keys: str = Field("", description="Comma-separated Tavily API keys; empty disables reference search")
     reference_judge_model: str = Field("gemini-3.8-flash", description="LiteLLM model judging reference candidates")
     reference_search_images: int = Field(1, ge=1, le=2, description="Found reference images passed to the model")
+    # 按上游的每日调用额度（北京时间自然日，上游=次数），兜底防批量实验或失控循环打穿付费上游。
+    # 每次请求上游前占一个名额，缓存命中不占；超额时生图按备用链换下一个模型，参考图搜索跳过。
+    # 默认值约为 10-23 ~ 11-01 单日生图峰值（8 次）的 6~12 倍；网关另有 image=200 的总上限。
+    provider_daily_limits: str = "volcano=100,google=50,alibaba=50,tavily=100"
+    # 用到上限的这个比例时先推一次预警，用满时再推一次；每个上游每天各一次。
+    quota_alert_ratio: float = Field(0.8, gt=0, lt=1)
+    # 飞书巡检群自定义机器人；留空则只写日志。webhook 地址即密钥。
+    quota_alert_webhook: SecretStr = SecretStr("")
+    quota_alert_sign_secret: SecretStr = SecretStr("")
+
+    @field_validator("provider_daily_limits")
+    @classmethod
+    def _validate_provider_limits(cls, v: str) -> str:
+        # 配错就让服务起不来，比静默不限额安全。
+        parse_provider_limits(v)
+        return v
+
+    def daily_limits(self) -> dict[str, int]:
+        return parse_provider_limits(self.provider_daily_limits)
 
     @field_validator("default_fallback_model", mode="before")
     @classmethod

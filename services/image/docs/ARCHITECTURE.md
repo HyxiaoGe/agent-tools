@@ -46,6 +46,7 @@
    - Compute cache key (SHA-256 of normalized params)
    - Check Redis cache -> return cached result if hit
    - Acquire Redis lock (thundering herd protection)
+   - `services/quota.py` reserves one slot of the provider's daily quota right before each upstream call (`PROVIDER_DAILY_LIMITS`); a used-up provider raises `quota_exceeded`, which falls back to the next model
    - Call the selected provider within its model limit and remaining total budget; reserve time for a backup
    - Retry only connection/pool failures (max 2 retries); generation read/write timeouts may use a backup
    - Save image to disk (`storage/images/`)

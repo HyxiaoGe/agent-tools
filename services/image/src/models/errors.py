@@ -21,6 +21,7 @@ class ErrorCode(StrEnum):
     UNAUTHORIZED = "unauthorized"
     RATE_LIMITED = "rate_limited"
     ADMISSION_UNAVAILABLE = "admission_unavailable"
+    QUOTA_EXCEEDED = "quota_exceeded"
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,9 @@ ERROR_SPECS: dict[ErrorCode, ErrorSpec] = {
     ),
     ErrorCode.INTERNAL_ERROR: ErrorSpec(500, False, "Internal error while generating the image."),
     ErrorCode.USAGE_UNAVAILABLE: ErrorSpec(503, False, "Generation accounting is temporarily unavailable."),
+    ErrorCode.QUOTA_EXCEEDED: ErrorSpec(
+        429, False, "The daily quota for this model's provider is used up; it resets at 00:00 Asia/Shanghai."
+    ),
 }
 
 
