@@ -521,7 +521,7 @@ async def test_firecrawl_web_response_parsing(monkeypatch):
                             "favicon": "https://example.com/favicon.ico",
                         }
                     ]
-                }
+                },
             },
             calls,
         ),
@@ -691,7 +691,7 @@ async def test_firecrawl_retries_without_freshness_when_first_response_is_empty(
                                 "description": "统计信息",
                             }
                         ]
-                    }
+                    },
                 },
                 request=httpx.Request("POST", url),
             )

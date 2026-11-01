@@ -86,3 +86,12 @@ class ProviderHistoricalUsageResponse(BaseModel):
     available: bool
     by_api_key: bool = False
     periods: list[ProviderUsagePeriod] = Field(default_factory=list)
+
+
+class ProviderBudgetStatus(BaseModel):
+    provider: str
+    day: str
+    limit: int
+    used: int
+    rejected: int
+    available: bool = True
