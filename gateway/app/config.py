@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _APP_ID_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}")
@@ -81,6 +81,15 @@ class Settings(BaseSettings):
 
     usage_db_path: str = "storage/usage.sqlite3"
     usage_retention_days: int = 90
+
+    # 每日用量日报：发到飞书「AI 成本&额度」群的自定义机器人，webhook 留空则不发。
+    # webhook 地址本身就是密钥，用 SecretStr 防止随配置对象出现在日志或报错里。
+    daily_report_webhook: SecretStr = SecretStr("")
+    daily_report_sign_secret: SecretStr = SecretStr("")
+    # 北京时间每天几点后发送前一天的日报
+    daily_report_hour: int = Field(default=9, ge=0, le=23)
+    # 记录哪天已发送，防止重启后重复发
+    daily_report_state_path: str = "storage/daily_report_state.json"
 
     @model_validator(mode="after")
     def _validate_products(self) -> Settings:
