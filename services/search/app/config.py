@@ -1,4 +1,4 @@
-from pydantic import Field, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -79,12 +79,6 @@ class Settings(BaseSettings):
     # 飞书自定义机器人（巡检群），留空则只写日志不推送。
     BUDGET_ALERT_WEBHOOK: str = ""
     BUDGET_ALERT_SIGN_SECRET: str = ""
-
-    # 每日用量日报（飞书「AI 成本&额度」群的自定义机器人），webhook 留空则不发。
-    # 北京时间每天 DAILY_REPORT_HOUR 点后发送前一天的汇总。
-    DAILY_REPORT_WEBHOOK: str = ""
-    DAILY_REPORT_SIGN_SECRET: str = ""
-    DAILY_REPORT_HOUR: int = Field(default=9, ge=0, le=23)
 
     # Server
     HOST: str = "0.0.0.0"
