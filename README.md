@@ -54,7 +54,7 @@ flowchart LR
 
 ### 付费调用有每日上限
 
-网关按服务设每日调用上限（`SERVICE_DAILY_LIMITS`，超出返回 `429 daily_limit_exceeded`，北京时间 0 点重置），作为最外层兜底；search 另按上游设每日额度（`PROVIDER_DAILY_LIMITS`）。快到上限和用满时推飞书巡检群，每天 9 点网关把前一天的用量日报推到「AI 成本&额度」群。
+网关按服务设每日调用上限（`SERVICE_DAILY_LIMITS`，超出返回 `429 daily_limit_exceeded`，北京时间 0 点重置），作为最外层兜底；search、image、reader 另按上游设每日额度（各自的 `PROVIDER_DAILY_LIMITS`）。快到上限和用满时推飞书巡检群，每天 9 点网关把前一天的用量日报推到「AI 成本&额度」群。
 
 ### 网页读取：先免费，慢了再并行付费
 

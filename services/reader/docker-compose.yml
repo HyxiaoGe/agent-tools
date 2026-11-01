@@ -6,6 +6,11 @@ services:
     image: ${AGENT_TOOLS_IMAGE:-agent-tools/reader:current}
     container_name: reader-service
     env_file: .env
+    environment:
+      # 每日上游额度的计数，重启后接着算（见 quota.py）
+      QUOTA_STATE_PATH: /app/storage/quota_state.json
+    volumes:
+      - ./storage:/app/storage
     # 不对外暴露端口：只有 agent-tools 网关经专用网络访问。
     restart: always
     networks:

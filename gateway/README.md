@@ -52,7 +52,7 @@ agent-tools 的统一入口。调用方只配一个地址和一把产品密钥�
 - 只算真正的调用：REST 请求和 MCP `tools/call`。MCP 握手（`initialize`、`tools/list`、SSE）不算也不拦，会话可以照常建立。
 - 所有产品共用一个计数。计数在内存里，每天第一次用到时从用量记录补回当天已有的调用数，重启不清零；被拦下的请求不计入。
 - 用到 `LIMIT_ALERT_RATIO`（默认 0.8）和用满时各推一次飞书巡检群（`LIMIT_ALERT_WEBHOOK` / `LIMIT_ALERT_SIGN_SECRET`，留空只写日志），每个服务每天各一次。
-- 服务内部还有按上游的额度（如 search 的 `PROVIDER_DAILY_LIMITS`），通常先触发。
+- 服务内部还有按上游的额度（search、image、reader 各自的 `PROVIDER_DAILY_LIMITS`），通常先触发。
 
 ## 用量
 
