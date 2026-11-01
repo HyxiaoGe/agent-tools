@@ -35,9 +35,18 @@
 | 502 | `page_error` | 原网页返回其他错误状态码（如 403），错误页不当正文 |
 | 504 | `timeout` | 总时限内没读到 |
 | 503 | `rate_limited` | Jina 限流 |
+| 429 | `daily_quota_exceeded` | Jina 今日额度已用完（见[每日上游额度](#每日上游额度)），不要重试，北京时间 0 点重置 |
 | 502 | `upstream_auth` | Jina 号池全部 key 不可用 |
 | 502 | `upstream_error` / `request_error` | Jina 返回其他错误或请求失败 |
 | 422 | — | URL 格式无效 |
+
+### `GET /usage/daily[?day=YYYY-MM-DD]`
+
+某天（北京时间，默认今天）各上游的调用 / 被每日额度拦下次数，供网关日报读取；只有计数，计数保留 3 天，更早的日期全是 0。
+
+```json
+{"day": "2026-11-01", "available": true, "providers": [{"provider": "firecrawl", "limit": 300, "used": 42, "rejected": 0}, …]}
+```
 
 ### `GET /health`
 
@@ -53,6 +62,15 @@
 4. **Jina 只兜底**：Firecrawl 失败（超时、被拦截、原网页 403 等其他错误码、无正文、号池全部不可用）后才启动；没配 Firecrawl 时第 2 步直接带上 Jina。Jina 会把错误页包装成 200 返回，这里按它头部的 `Warning: Target URL returned error <状态码>` 识别，错误页不当正文。
 
 为什么 Firecrawl 为主：同一批 120 个网址实测，Firecrawl 中位 4.3s、Jina 8.6s，两者读到真正正文的页数相当；Firecrawl 会报告原网页状态码，Jina 读到的页里约一成是 404 等错误页。
+
+## 每日上游额度
+
+兜底防止批量实验或失控循环把付费上游打穿。`PROVIDER_DAILY_LIMITS`（`上游=次数`，逗号分隔，北京时间自然日），默认 `firecrawl=300,tavily=300,jina=300`（10 月以来 reader 单日峰值 127 次读取；Firecrawl 和 search 用的是同一个账号）。网关另有 `reader=1000` 的每日总上限。
+
+- 一次读取真正请求某家上游时算一次；同一读取内换 key、Jina 重试不另算；号池没有可用 key、没发出请求时不算。直接抓取免费，不计。未列出的上游不限但照样计数，`0` 表示当天不调；写了未知上游名，服务起不来。
+- 用满后当天跳过该上游：Firecrawl 用满时直接请求 Jina，Tavily 用满时不再请求；Jina 用满时它的兜底返回 429 `daily_quota_exceeded`（不可重试）。三家都用满时只剩直接抓取。
+- 服务是单进程，计数在内存里，每次变化原子写入 `QUOTA_STATE_PATH`（compose 设为 `/app/storage/quota_state.json`，挂载 `./storage`），重启后接着算。状态文件读不了时从 0 计、不拦读取，只记日志。
+- 用到 `QUOTA_ALERT_RATIO`（默认 0.8）和用满时各推一次飞书巡检群（`QUOTA_ALERT_WEBHOOK` / `QUOTA_ALERT_SIGN_SECRET`，留空只写日志）；重启后不会重复告警。
 
 ## 号池
 
@@ -84,6 +102,10 @@ ssh dev 'docker exec reader-service python scripts/check_jina_keys.py'   # accou
 | `DIRECT_READ_TIMEOUT` | 4 | 直接抓取超时（秒） |
 | `DIRECT_READ_MIN_CHARS` | 300 | 正文少于这么多字视为没读到（多半是 JS 渲染页或拦截页） |
 | `DIRECT_READ_DOH_URL` | `https://223.5.5.5/resolve` | 核验地址用的 DoH |
+| `PROVIDER_DAILY_LIMITS` | `firecrawl=300,tavily=300,jina=300` | 各上游每日调用上限，见[每日上游额度](#每日上游额度) |
+| `QUOTA_ALERT_RATIO` | 0.8 | 用到上限的这个比例时告警一次 |
+| `QUOTA_ALERT_WEBHOOK` / `QUOTA_ALERT_SIGN_SECRET` | 空 | 额度告警推送的飞书巡检群机器人（源值在 dev 的 `~/.config/feishu-webhooks.env` 的 `FEISHU_PATROL_*`）；留空只写日志 |
+| `QUOTA_STATE_PATH` | 空（只在内存） | 额度计数的状态文件；compose 已设为 `/app/storage/quota_state.json` |
 
 ## 日志
 
@@ -94,6 +116,8 @@ ssh dev 'docker exec reader-service python scripts/check_jina_keys.py'   # accou
 - `reader_firecrawl_page_error page_status=...`：原网页返回错误状态码
 - `reader_{firecrawl,tavily}_fallback kind=...`：该方式没读到
 - `reader_{firecrawl,tavily,jina}_key_unavailable key_index=... upstream_status=...`：某把 key 进入冷却
+- `reader_daily_quota_exceeded provider=... limit=...`：该上游今日额度已用完，本次跳过
+- `reader_quota_state_{load,save}_failed`、`reader_quota_alert_failed`：额度状态文件读写失败、告警推送失败（只记异常类型和状态码）
 
 ## 开发与部署
 

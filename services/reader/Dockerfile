@@ -7,7 +7,7 @@ COPY requirements.txt .
 ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py direct_read.py ./
+COPY main.py direct_read.py quota.py ./
 COPY scripts/ scripts/
 
 EXPOSE 8091

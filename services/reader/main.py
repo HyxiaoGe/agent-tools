@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import time
+from datetime import date
 from typing import Annotated
 from urllib.parse import urlparse
 
@@ -16,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+import quota
 from direct_read import read_direct
 
 app = FastAPI(title="Reader Service")
@@ -243,6 +245,8 @@ class JinaKeyPool(KeyPool):
 _tavily_pool = TavilyKeyPool(TAVILY_API_KEYS)
 _jina_pool = JinaKeyPool(JINA_API_KEYS)
 _firecrawl_pool = FirecrawlKeyPool(FIRECRAWL_API_KEYS)
+# 按上游的每日额度（PROVIDER_DAILY_LIMITS），见 quota.py
+_quota = quota.from_env()
 
 
 async def _fetch_tavily(url: str, api_key: str, timeout: float) -> tuple[str, str | None] | str:
@@ -304,11 +308,18 @@ async def _read_with_pool(
     started_at = _monotonic()
     reason = "no_available_key"
     upstream_status = None
+    reserved = False
     for index, api_key in pool.candidates():
         remaining = deadline - _monotonic()
         if remaining <= 0:
             reason = "timeout"
             break
+        # 真正请求前占当天名额，同一读取内换 key 不另占；用满就跳过这家，由其他读取方式兜底。
+        if not reserved:
+            if not _quota.try_use(pool.provider):
+                reason = "daily_quota_exceeded"
+                break
+            reserved = True
         try:
             result = await asyncio.wait_for(
                 fetch(url, api_key, remaining), timeout=remaining
@@ -435,6 +446,12 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/usage/daily")
+async def daily_usage(day: date | None = None):
+    """某天（北京时间，默认今天）各上游的调用 / 被每日额度拦下次数，供网关日报读取；只含计数。"""
+    return _quota.summary(day or quota.beijing_today())
+
+
 class _JinaOutcome:
     """Jina 读取的结果；超时被取消时也保留已用的尝试次数，供失败详情使用。"""
 
@@ -467,6 +484,13 @@ async def _read_with_jina(url: str, deadline: float, outcome: _JinaOutcome) -> N
         outcome.error_retryable = False
         outcome.upstream_status = None
         logger.warning("reader_jina_no_available_key total=%s", len(JINA_API_KEYS))
+        return
+    if not _quota.try_use("jina"):
+        outcome.error_status = 429
+        outcome.error_kind = "daily_quota_exceeded"
+        outcome.error_message = "Jina Reader 今日额度已用完，北京时间 0 点重置"
+        outcome.error_retryable = False
+        outcome.upstream_status = None
         return
     key_position = 0
     page_attempts = 0

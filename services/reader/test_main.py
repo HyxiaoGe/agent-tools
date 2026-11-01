@@ -10,9 +10,11 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 import direct_read
 import main
+import quota
 
 
 PIPELINE_WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "pipeline.yml"
@@ -36,6 +38,11 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         firecrawl_pool_patch = patch("main._firecrawl_pool", main.FirecrawlKeyPool([]))
         firecrawl_pool_patch.start()
         self.addCleanup(firecrawl_pool_patch.stop)
+        # 每个用例一份不限额、不落盘的计数；额度用例自己换
+        self.quota = quota.DailyQuota({})
+        quota_patch = patch("main._quota", self.quota)
+        quota_patch.start()
+        self.addCleanup(quota_patch.stop)
         # 这组用例覆盖 Tavily/Jina 链路；直接读取另见 DirectReadTests。
         direct_patch = patch("main.read_direct", new=AsyncMock(return_value=None))
         self.read_direct = direct_patch.start()
@@ -1166,6 +1173,109 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(timeout.pool, main.JINA_POOL_TIMEOUT)
         self.assertLessEqual(main.READ_TOTAL_TIMEOUT, 10)
 
+    # --- 每日上游额度 ---------------------------------------------------------
+
+    def _limit(self, **limits: int) -> None:
+        self.quota.limits = limits
+
+    def _usage(self, provider: str) -> tuple[int, int]:
+        row = next(
+            p for p in self.quota.summary(quota.beijing_today())["providers"] if p["provider"] == provider
+        )
+        return row["used"], row["rejected"]
+
+    async def test_firecrawl_over_quota_goes_straight_to_jina(self):
+        self._limit(firecrawl=0)
+        self.client.get.return_value = self._jina_success()
+
+        with patch("main._firecrawl_pool", main.FirecrawlKeyPool(["fc-test"])):
+            response = await main.read_url(self.url)
+
+        self.assertEqual(response.provider, "jina")
+        self.client.post.assert_not_awaited()
+        self.assertEqual(self._usage("firecrawl"), (0, 1))
+        self.assertEqual(self._usage("jina"), (1, 0))
+
+    async def test_tavily_over_quota_is_not_requested(self):
+        self._limit(tavily=0)
+        self.client.get.return_value = self._jina_success()
+
+        with patch("main._tavily_pool", main.TavilyKeyPool(["tvly-test"])):
+            response = await main.read_url(self.url)
+
+        self.assertEqual(response.provider, "jina")
+        self.client.post.assert_not_awaited()
+        self.assertEqual(self._usage("tavily"), (0, 1))
+
+    async def test_jina_over_quota_returns_non_retryable_429(self):
+        self._limit(jina=0)
+
+        with self.assertRaises(HTTPException) as raised:
+            await main.read_url(self.url)
+
+        self.assertEqual(raised.exception.status_code, 429)
+        self.assertEqual(raised.exception.detail["kind"], "daily_quota_exceeded")
+        self.assertFalse(raised.exception.detail["retryable"])
+        self.client.get.assert_not_awaited()
+
+    async def test_switching_firecrawl_key_counts_once(self):
+        self._limit(firecrawl=1)
+        self.client.post.side_effect = [self._status_error(429), self._firecrawl_response()]
+        self.client.get.side_effect = self._hang
+
+        with patch("main._firecrawl_pool", main.FirecrawlKeyPool(["k1", "k2"])):
+            first = await main.read_url(self.url)
+            self.client.get.side_effect = None
+            self.client.get.return_value = self._jina_success()
+            second = await main.read_url(self.url)
+
+        self.assertEqual(first.provider, "firecrawl")
+        self.assertEqual(self.client.post.await_count, 2)
+        # 第二次读取 Firecrawl 已用满，直接走 Jina
+        self.assertEqual(second.provider, "jina")
+        self.assertEqual(self._usage("firecrawl"), (1, 1))
+
+    async def test_jina_retry_counts_once(self):
+        self.client.get.side_effect = [httpx.ReadTimeout("第一次超时"), self._jina_success()]
+
+        with patch("main.asyncio.sleep", new=AsyncMock()):
+            response = await main.read_url(self.url)
+
+        self.assertEqual(response.attempts, 2)
+        self.assertEqual(self._usage("jina"), (1, 0))
+
+    async def test_no_available_key_does_not_use_quota(self):
+        pool = main.FirecrawlKeyPool(["k1"])
+        pool.mark_unavailable(0, 401)
+        self.client.get.return_value = self._jina_success()
+
+        with patch("main._firecrawl_pool", pool):
+            await main.read_url(self.url)
+
+        self.assertEqual(self._usage("firecrawl"), (0, 0))
+
+    async def test_usage_daily_reports_counts(self):
+        self._limit(jina=10)
+        self.client.get.return_value = self._jina_success()
+        await main.read_url(self.url)
+
+        today = await main.daily_usage()
+        past = await main.daily_usage(quota.beijing_today().replace(year=2020))
+
+        self.assertEqual(
+            today,
+            {
+                "day": quota.beijing_today().isoformat(),
+                "available": True,
+                "providers": [
+                    {"provider": "firecrawl", "limit": None, "used": 0, "rejected": 0},
+                    {"provider": "tavily", "limit": None, "used": 0, "rejected": 0},
+                    {"provider": "jina", "limit": 10, "used": 1, "rejected": 0},
+                ],
+            },
+        )
+        self.assertTrue(all(p["used"] == 0 for p in past["providers"]))
+
 
 
 ARTICLE_HTML = (
@@ -1348,6 +1458,133 @@ class DirectReadTests(unittest.IsolatedAsyncioTestCase):
     def test_container_ships_direct_read_module(self):
         dockerfile = Path(__file__).with_name("Dockerfile").read_text()
         self.assertIn("direct_read.py", dockerfile)
+
+
+class QuotaTests(unittest.TestCase):
+    """每日上游额度：状态文件、北京时间日界、告警、配置校验。"""
+
+    def setUp(self):
+        self.dir = Path(self.enterContext(__import__("tempfile").TemporaryDirectory()))
+        self.path = str(self.dir / "storage" / "quota_state.json")
+        self.alerts: list[str] = []
+
+    def make(self, **limits: int) -> quota.DailyQuota:
+        return quota.DailyQuota(limits, self.path, 0.8, self.alerts.append)
+
+    def test_alerts_once_at_ratio_and_once_when_exhausted_across_restarts(self):
+        first = self.make(jina=5)
+        self.assertEqual([first.try_use("jina") for _ in range(4)], [True] * 4)
+        second = self.make(jina=5)  # 重启：从状态文件接着算
+        self.assertEqual([second.try_use("jina") for _ in range(3)], [True, False, False])
+        third = self.make(jina=5)
+        self.assertFalse(third.try_use("jina"))
+
+        self.assertEqual(len(self.alerts), 2)
+        self.assertIn("jina 今日上游已调用 4 次", self.alerts[0])
+        self.assertIn("80%", self.alerts[0])
+        self.assertIn("jina 今日上游调用已达每日上限 5 次", self.alerts[1])
+        summary = third.summary(quota.beijing_today())
+        self.assertEqual(summary["providers"][2], {"provider": "jina", "limit": 5, "used": 5, "rejected": 3})
+
+    def test_counters_follow_beijing_days_and_keep_three_days(self):
+        q = self.make(tavily=1)
+        before = quota.datetime(2026, 11, 1, 15, 59, tzinfo=quota.ZoneInfo("UTC"))  # 北京 11-01 23:59
+        after = quota.datetime(2026, 11, 1, 16, 0, tzinfo=quota.ZoneInfo("UTC"))  # 北京 11-02 00:00
+        self.assertTrue(q.try_use("tavily", before))
+        self.assertFalse(q.try_use("tavily", before))
+        self.assertTrue(q.try_use("tavily", after))
+        q.try_use("tavily", quota.datetime(2026, 11, 4, 1, tzinfo=quota.BEIJING))
+
+        stored = json.loads(Path(self.path).read_text())["days"]
+        self.assertEqual(sorted(stored), ["2026-11-02", "2026-11-04"])
+        self.assertEqual(q.summary(quota.date(2026, 11, 1))["providers"][1]["used"], 0)
+
+    def test_corrupt_state_starts_from_zero_without_blocking(self):
+        Path(self.path).parent.mkdir(parents=True)
+        Path(self.path).write_text("not json")
+
+        with self.assertLogs("reader_service", "WARNING") as logs:
+            q = self.make(jina=1)
+        self.assertIn("reader_quota_state_load_failed", logs.output[0])
+        self.assertTrue(q.try_use("jina"))
+        self.assertEqual(json.loads(Path(self.path).read_text())["days"][quota.beijing_today().isoformat()]["jina"]["calls"], 1)
+
+    def test_save_failure_keeps_counting_in_memory(self):
+        (self.dir / "storage").write_text("文件占了目录名")
+
+        with self.assertLogs("reader_service", "WARNING") as logs:
+            q = self.make(jina=1)
+            self.assertTrue(q.try_use("jina"))
+            self.assertFalse(q.try_use("jina"))
+        self.assertTrue(any("reader_quota_state_save_failed" in line for line in logs.output))
+
+    def test_without_state_path_counts_in_memory(self):
+        q = quota.DailyQuota({"jina": 1})
+        self.assertTrue(q.try_use("jina"))
+        self.assertFalse(q.try_use("jina"))
+        self.assertEqual(list(self.dir.iterdir()), [])
+
+    def test_limits_are_validated(self):
+        self.assertEqual(quota.parse_limits(" Jina=10, tavily=0 ,"), {"jina": 10, "tavily": 0})
+        for raw in ("jina", "jina=-1", "jina=lots", "=3", "brave=5"):
+            with self.assertRaises(ValueError):
+                quota.parse_limits(raw)
+        self.assertEqual(quota.parse_limits(quota.DEFAULT_LIMITS), {"firecrawl": 300, "tavily": 300, "jina": 300})
+        with patch.dict("os.environ", {"QUOTA_ALERT_RATIO": "1.5"}), self.assertRaises(ValueError):
+            quota.from_env()
+
+    def test_feishu_alert_is_signed_and_failures_never_log_the_webhook(self):
+        webhook = "https://open.feishu.cn/open-apis/bot/v2/hook/patrol-token"
+        posted: list[dict] = []
+
+        class Client:
+            fail = False
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+            async def post(self, url: str, json: dict):
+                if Client.fail:
+                    raise httpx.ConnectError(f"cannot reach {url}")
+                posted.append(json)
+                return httpx.Response(200, json={"code": 0})
+
+        async def run():
+            alert = quota.feishu_alert(webhook, "patrol-secret")
+            alert("第一条")
+            await asyncio.gather(*quota._alert_tasks)
+            Client.fail = True
+            alert("第二条")
+            await asyncio.gather(*quota._alert_tasks)
+
+        self.assertIsNone(quota.feishu_alert("  ", "x"))
+        with patch("quota._feishu_client", Client), self.assertLogs("reader_service", "WARNING") as logs:
+            asyncio.run(run())
+
+        self.assertEqual(len(posted), 1)
+        self.assertEqual(posted[0]["content"]["text"], "第一条")
+        self.assertTrue(posted[0]["sign"])
+        self.assertEqual(logs.output, ["WARNING:reader_service:reader_quota_alert_failed error=ConnectError"])
+
+    def test_usage_daily_validates_day(self):
+        client = TestClient(main.app)
+        self.assertEqual(client.get("/usage/daily", params={"day": "11/01"}).status_code, 422)
+        ok = client.get("/usage/daily", params={"day": "2026-11-01"})
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.json()["day"], "2026-11-01")
+
+    def test_container_persists_quota_state(self):
+        dockerfile = Path(__file__).with_name("Dockerfile").read_text()
+        compose = Path(__file__).with_name("docker-compose.yml").read_text()
+        gitignore = Path(__file__).with_name(".gitignore").read_text().splitlines()
+
+        self.assertIn("quota.py", dockerfile)
+        self.assertIn("./storage:/app/storage", compose)
+        self.assertIn("QUOTA_STATE_PATH: /app/storage/quota_state.json", compose)
+        self.assertIn("storage/", gitignore)
 
 
 if __name__ == "__main__":
