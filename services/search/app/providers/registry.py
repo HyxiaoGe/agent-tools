@@ -31,7 +31,9 @@ class ProviderUsageError(Exception):
 
 def _init_providers() -> None:
     # 统一套上每日额度包装：路由主调用、fallback、MCP 都从这里取 provider，不会绕过额度。
-    _providers["brave"] = BudgetGuardedProvider("brave", BraveProvider())
+    # Brave 和其他 provider 一样有 key 才注册：删掉 key 即下线，不会再占着 fallback 位置。
+    if settings.BRAVE_API_KEY:
+        _providers["brave"] = BudgetGuardedProvider("brave", BraveProvider())
     if settings.TAVILY_API_KEY:
         _providers["tavily"] = BudgetGuardedProvider("tavily", TavilyProvider())
     if settings.FIRECRAWL_API_KEY:

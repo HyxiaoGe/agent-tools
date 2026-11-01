@@ -56,4 +56,4 @@ Port: 8080. Redis required (see docker-compose.yml).
 
 ## Environment
 
-Copy `.env.example` to `.env`. Required: `BRAVE_API_KEY` or `TAVILY_API_KEY`.
+Copy `.env.example` to `.env`. Providers are registered only when their API key is set (Brave included); the fallback is the first registered provider other than the primary, in order brave → tavily → firecrawl → deepseek.

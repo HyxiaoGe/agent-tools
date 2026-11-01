@@ -11,6 +11,10 @@ class TavilyProvider:
         self.api_key = settings.TAVILY_API_KEY
 
     async def search(self, request: SearchRequest) -> SearchResponse:
+        if request.type == SearchType.IMAGE:
+            # Tavily 没有图片搜索；不能把网页结果冒充图片结果返回，抛错交给路由层处理
+            raise ValueError("tavily provider does not support image search")
+
         # 构造请求参数
         payload: dict = {
             "query": request.query,
