@@ -91,6 +91,7 @@ Claude Code 集成配置：
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `SEARCH_PROVIDER` | `brave` | 当前搜索 Provider |
+| `SEARCH_FALLBACK_PROVIDERS` | 空 | 逗号分隔的备用链，如 `firecrawl,tavily`。主 provider 报错或结果少于 `count/2` 条时按顺序尝试，够数即停；自动跳过主 provider 本身和未配置 key 的，写了未知名字服务起不来。留空 = 注册顺序里第一个非主 provider |
 | `BRAVE_API_KEY` | — | Brave Search API 密钥 |
 | `TAVILY_API_KEY` | — | Tavily Search API 密钥 |
 | `FIRECRAWL_API_KEY` | — | Firecrawl API 密钥 |

@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 from app.budget import BudgetGuardedProvider
 from app.cache import get_redis
-from app.config import settings
+from app.config import parse_provider_list, settings
 from app.logger import get_logger
 from app.models import ProviderHistoricalUsageResponse, ProviderUsageResponse
 from app.providers.base import SearchProvider
@@ -16,6 +16,7 @@ from app.providers.tavily import TavilyProvider
 from app.usage import get_recorded_provider_usage
 
 _providers: dict[str, SearchProvider] = {}
+_warned_unavailable_fallbacks: set[str] = set()
 log = get_logger()
 
 
@@ -51,14 +52,29 @@ def get_provider(name: str | None = None) -> SearchProvider:
     return _providers[provider_name]
 
 
-def get_fallback_provider(primary_name: str) -> tuple[str | None, SearchProvider | None]:
-    """获取备用 provider（排除主 provider）"""
+def get_fallback_providers(primary_name: str) -> list[tuple[str, SearchProvider]]:
+    """按 SEARCH_FALLBACK_PROVIDERS 顺序返回备用链，跳过主 provider 和未注册（没配 key）的。
+
+    未配置时沿用旧行为：注册顺序里第一个非主 provider。
+    """
     if not _providers:
         _init_providers()
-    for name, prov in _providers.items():
-        if name != primary_name:
-            return name, prov
-    return None, None
+    configured = parse_provider_list(settings.SEARCH_FALLBACK_PROVIDERS)
+    if not configured:
+        return [(name, prov) for name, prov in _providers.items() if name != primary_name][:1]
+
+    chain: list[tuple[str, SearchProvider]] = []
+    for name in configured:
+        if name == primary_name:
+            continue
+        prov = _providers.get(name)
+        if prov is None:
+            if name not in _warned_unavailable_fallbacks:
+                _warned_unavailable_fallbacks.add(name)
+                log.warning("fallback_provider_unavailable", provider=name, reason="未配置 API key，已从备用链跳过")
+            continue
+        chain.append((name, prov))
+    return chain
 
 
 def list_providers() -> list[dict]:

@@ -57,7 +57,7 @@ Client -> POST /search
   -> rate limit check
   -> Redis cache lookup
   -> if miss: provider.search()
-  -> if insufficient results: fallback provider
+  -> if error / insufficient results: fallback chain (SEARCH_FALLBACK_PROVIDERS, in order, stop when enough)
   -> cache result (if quality threshold met)
   -> return SearchResponse
 ```
