@@ -51,6 +51,20 @@ agent-tools 的统一入口。调用方只配一个地址和一把产品密钥�
 docker exec agent-tools-gateway python -m app.usage_report --app-id fusion --days 7
 ```
 
+### 每日日报
+
+配置了 `DAILY_REPORT_WEBHOOK` 时，北京时间每天 `DAILY_REPORT_HOUR`（默认 9）点后把前一天的汇总推到飞书「AI 成本&额度」群：
+
+- 总调用 / 失败次数（附前一天总量），按服务（含 MCP 工具前 3）和按产品的调用量。MCP 的握手消息（initialize、tools/list、SSE）不算调用，只统计 `tools/call` 和 REST 请求。
+- search 实际调了哪家上游、被额度拦下次数、转备用次数和 Firecrawl 剩余 credits：网关看不到这些，向 search 的 `/usage/daily` 拉取。
+
+哪天已发送记在 `DAILY_REPORT_STATE_PATH`（默认 `storage/daily_report_state.json`），重启不重发；发送失败每天最多尝试 3 次。手动执行：
+
+```bash
+docker exec agent-tools-gateway python -m app.daily_report --print            # 只打印昨天的日报
+docker exec agent-tools-gateway python -m app.daily_report --day 2026-11-01 --test   # 加【测试】前缀实发，不影响定时发送
+```
+
 ## 开发
 
 ```bash

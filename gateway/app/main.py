@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Mapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import httpx
 from fastapi import FastAPI
@@ -12,6 +13,7 @@ from starlette.responses import JSONResponse, Response
 
 from app.auth import AuthError, authenticate, authorize_service
 from app.config import Settings, Upstream
+from app.daily_report import run_daily_report_loop
 from app.proxy import forward, mcp_tool_name
 from app.usage import UsageStore
 
@@ -90,9 +92,17 @@ def create_app(
         _configure_logging()
         app.state.clients = {name: _client(up, settings, transports.get(name)) for name, up in upstreams.items()}
         app.state.usage = UsageStore(settings.usage_db_path, settings.usage_retention_days)
+        # 配了日报 webhook 才起定时任务；单 worker 部署，哪天已发记在状态文件里，重启不重发。
+        report_task = None
+        if settings.daily_report_webhook.get_secret_value().strip():
+            report_task = asyncio.create_task(run_daily_report_loop(settings, app.state.clients["search"]))
         try:
             yield
         finally:
+            if report_task is not None:
+                report_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await report_task
             for client in app.state.clients.values():
                 await client.aclose()
             app.state.usage.close()
