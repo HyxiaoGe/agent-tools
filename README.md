@@ -52,6 +52,10 @@ flowchart LR
 
 网关给每个上游独立的连接池和超时。某个服务堆积慢请求时，只有它返回 `503 upstream_busy` 或 `504 upstream_timeout`，其他服务照常响应。
 
+### 付费调用有每日上限
+
+网关按服务设每日调用上限（`SERVICE_DAILY_LIMITS`，超出返回 `429 daily_limit_exceeded`，北京时间 0 点重置），作为最外层兜底；search 另按上游设每日额度（`PROVIDER_DAILY_LIMITS`）。快到上限和用满时推飞书巡检群，每天 9 点网关把前一天的用量日报推到「AI 成本&额度」群。
+
 ### 网页读取：先免费，慢了再并行付费
 
 Agent 常并行读多个网页、要等最慢的那个，所以一次读取总时限 10 秒：

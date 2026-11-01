@@ -11,16 +11,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
-import hashlib
-import hmac
 import json
 import logging
 import os
 import sqlite3
 import tempfile
-import time
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
@@ -28,6 +25,8 @@ from pathlib import Path
 import httpx
 
 from app.config import Settings
+from app.feishu import send_feishu_text
+from app.proxy import counts_as_call
 
 logger = logging.getLogger("gateway")
 
@@ -44,6 +43,8 @@ _ROLE_LABELS = {"primary": "（主）", "fallback": "（备用）"}
 class ServiceStats:
     calls: int = 0
     failed: int = 0
+    # 被网关每日上限拦下的请求，不计入 calls / failed
+    limited: int = 0
     tools: Counter = field(default_factory=Counter)
 
 
@@ -52,13 +53,9 @@ class DayStats:
     day: date
     calls: int = 0
     failed: int = 0
+    limited: int = 0
     services: dict[str, ServiceStats] = field(default_factory=lambda: defaultdict(ServiceStats))
     products: Counter = field(default_factory=Counter)
-
-
-def _is_mcp_path(path: str) -> bool:
-    # 与 proxy.mcp_tool_name 的判断一致；image-service 的 MCP 路径带尾斜杠。
-    return path.rstrip("/").rsplit("/", 1)[-1] == "mcp"
 
 
 def day_bounds_utc(day: date) -> tuple[str, str]:
@@ -77,8 +74,9 @@ def collect_day_stats(db_path: str, day: date) -> DayStats:
         rows = conn.execute(
             """
             SELECT service, app_id, path, tool,
-                   COUNT(*) AS requests,
-                   SUM(outcome != 'ok' OR status >= 400) AS failed
+                   SUM(outcome != 'limited') AS requests,
+                   SUM(outcome != 'limited' AND (outcome != 'ok' OR status >= 400)) AS failed,
+                   SUM(outcome = 'limited') AS limited
             FROM requests WHERE ts >= ? AND ts < ?
             GROUP BY service, app_id, path, tool
             """,
@@ -86,17 +84,20 @@ def collect_day_stats(db_path: str, day: date) -> DayStats:
         ).fetchall()
     finally:
         conn.close()
-    for service, app_id, path, tool, requests, failed in rows:
-        if _is_mcp_path(path) and not tool:
+    for service, app_id, path, tool, requests, failed, limited in rows:
+        if not counts_as_call(path, tool):
             continue
         svc = stats.services[service]
         svc.calls += requests
         svc.failed += failed
-        if tool:
+        svc.limited += limited
+        if tool and requests:
             svc.tools[tool] += requests
         stats.calls += requests
         stats.failed += failed
-        stats.products[app_id] += requests
+        stats.limited += limited
+        if requests:
+            stats.products[app_id] += requests
     return stats
 
 
@@ -151,9 +152,25 @@ def _search_lines(summary: dict | None, gateway_search_calls: int) -> list[str]:
     return lines
 
 
-def render_report(stats: DayStats, previous: DayStats | None, search_summary: dict | None) -> str:
+def _limit_note(svc: ServiceStats, limit: int | None) -> str:
+    # 只在用量过半或有拦截时提示上限，平时不占篇幅
+    if limit is None or not (svc.limited or svc.calls >= limit / 2):
+        return ""
+    note = f"，上限 {limit:,}"
+    return note + (f"，拦下 {svc.limited:,} 次" if svc.limited else "")
+
+
+def render_report(
+    stats: DayStats,
+    previous: DayStats | None,
+    search_summary: dict | None,
+    limits: Mapping[str, int] | None = None,
+) -> str:
+    limits = limits or {}
     lines = [f"【agent-tools 日报】{stats.day.strftime('%m-%d')}（北京时间）"]
     overview = f"调用 {stats.calls:,} 次，失败 {stats.failed:,} 次"
+    if stats.limited:
+        overview += f"，被每日上限拦下 {stats.limited:,} 次"
     if previous is not None:
         overview += f"（前一天 {previous.calls:,} 次）"
     lines.append(overview)
@@ -161,7 +178,9 @@ def render_report(stats: DayStats, previous: DayStats | None, search_summary: di
     if stats.services:
         lines.append("按服务（调用 / 失败）：")
         for name, svc in sorted(stats.services.items(), key=lambda item: (-item[1].calls, item[0])):
-            lines.append(f"· {name} {svc.calls:,} / {svc.failed:,}{_fmt_tools(svc.tools)}")
+            lines.append(
+                f"· {name} {svc.calls:,} / {svc.failed:,}{_fmt_tools(svc.tools)}{_limit_note(svc, limits.get(name))}"
+            )
         lines.append("按产品：" + " · ".join(f"{app} {count:,}" for app, count in _ranked(stats.products)))
 
     search_calls = stats.services["search"].calls if "search" in stats.services else 0
@@ -191,38 +210,7 @@ async def build_report(settings: Settings, search_client: httpx.AsyncClient, day
         asyncio.to_thread(collect_day_stats, settings.usage_db_path, day - timedelta(days=1)),
     )
     summary = await fetch_search_summary(search_client, day)
-    return render_report(stats, previous, summary)
-
-
-def _feishu_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=10)
-
-
-async def send_feishu_text(webhook: str, secret: str, text: str) -> bool:
-    """发飞书自定义机器人文本消息，返回 code 0 时为 True。日志里只记状态码和异常类型：webhook 地址即密钥。"""
-    payload: dict = {"msg_type": "text", "content": {"text": text}}
-    if secret:
-        timestamp = str(int(time.time()))
-        signature = hmac.new(f"{timestamp}\n{secret}".encode(), digestmod=hashlib.sha256).digest()
-        payload["timestamp"] = timestamp
-        payload["sign"] = base64.b64encode(signature).decode()
-    try:
-        async with _feishu_client() as client:
-            resp = await client.post(webhook, json=payload)
-    except httpx.HTTPError as exc:
-        logger.warning("daily_report_send_failed: %s", type(exc).__name__)
-        return False
-    if resp.status_code != 200:
-        logger.warning("daily_report_send_failed: status %s", resp.status_code)
-        return False
-    try:
-        code = resp.json().get("code", 0)
-    except ValueError:
-        code = "invalid json"
-    if code != 0:
-        logger.warning("daily_report_send_failed: feishu code %s", code)
-        return False
-    return True
+    return render_report(stats, previous, summary, settings.daily_limits())
 
 
 async def send_daily_report(
@@ -235,6 +223,7 @@ async def send_daily_report(
         settings.daily_report_webhook.get_secret_value().strip(),
         settings.daily_report_sign_secret.get_secret_value().strip(),
         text,
+        purpose="daily_report",
     )
     if ok:
         logger.info("daily_report_sent: %s%s", day.isoformat(), " (test)" if test else "")

@@ -14,6 +14,27 @@ _APP_ID_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 DEFAULT_PRODUCT_SERVICES = ("image", "search", "reader", "trends")
 
 
+def parse_daily_limits(raw: str) -> dict[str, int]:
+    """解析 `search=2000,image=200`；未列出的服务不限，0 表示当天一律拒绝。"""
+    limits: dict[str, int] = {}
+    for part in raw.split(","):
+        entry = part.strip()
+        if not entry:
+            continue
+        name, sep, value = entry.partition("=")
+        name = name.strip().lower()
+        if not sep or not name:
+            raise ValueError(f"SERVICE_DAILY_LIMITS 条目格式应为 服务=次数: {entry!r}")
+        try:
+            limit = int(value.strip())
+        except ValueError as exc:
+            raise ValueError(f"SERVICE_DAILY_LIMITS 次数必须是整数: {entry!r}") from exc
+        if limit < 0:
+            raise ValueError(f"SERVICE_DAILY_LIMITS 次数不能为负: {entry!r}")
+        limits[name] = limit
+    return limits
+
+
 class ProductConfig(BaseModel):
     # 只引用环境变量名，密钥本身不进配置结构，避免出现在日志或报错里。
     service_key_env: str = Field(pattern=r"^[A-Z][A-Z0-9_]{0,127}$")
@@ -82,6 +103,16 @@ class Settings(BaseSettings):
     usage_db_path: str = "storage/usage.sqlite3"
     usage_retention_days: int = 90
 
+    # 按服务的每日调用上限（北京时间自然日）：兜底防批量实验或失控循环打穿付费上游，超出返回 429。
+    # 只算 REST 请求和 MCP tools/call，不算握手；未列出的服务（免费的 trends、context7）不限。
+    # 默认值约为 10-23 ~ 11-01 单日峰值的 5~25 倍；服务内部另有按上游的额度。
+    service_daily_limits: str = "search=2000,reader=1000,image=200,weather=1000,amap=1000,tmap=1000,flyai=100"
+    # 用到上限的这个比例时先推一次预警，用满时再推一次；每个服务每天各一次。
+    limit_alert_ratio: float = Field(default=0.8, gt=0, lt=1)
+    # 飞书巡检群自定义机器人；留空则只写日志。
+    limit_alert_webhook: SecretStr = SecretStr("")
+    limit_alert_sign_secret: SecretStr = SecretStr("")
+
     # 每日用量日报：发到飞书「AI 成本&额度」群的自定义机器人，webhook 留空则不发。
     # webhook 地址本身就是密钥，用 SecretStr 防止随配置对象出现在日志或报错里。
     daily_report_webhook: SecretStr = SecretStr("")
@@ -100,11 +131,18 @@ class Settings(BaseSettings):
         if len(key_envs) != len(set(key_envs)):
             raise ValueError("PRODUCTS must not share a service key")
         known = set(self.upstreams())
+        # 配错就让网关起不来，比静默不限额安全。
+        unknown_limits = set(parse_daily_limits(self.service_daily_limits)) - known
+        if unknown_limits:
+            raise ValueError(f"SERVICE_DAILY_LIMITS references unknown services: {sorted(unknown_limits)}")
         for app_id, product in self.products.items():
             unknown = set(product.services or ()) - known
             if unknown:
                 raise ValueError(f"PRODUCTS[{app_id}].services references unknown services: {sorted(unknown)}")
         return self
+
+    def daily_limits(self) -> dict[str, int]:
+        return parse_daily_limits(self.service_daily_limits)
 
     def allowed_services(self, app_id: str) -> frozenset[str]:
         product = self.products[app_id]
