@@ -112,7 +112,7 @@ def create_app(
         # 配了日报 webhook 才起定时任务；单 worker 部署，哪天已发记在状态文件里，重启不重发。
         report_task = None
         if settings.daily_report_webhook.get_secret_value().strip():
-            report_task = asyncio.create_task(run_daily_report_loop(settings, app.state.clients["search"]))
+            report_task = asyncio.create_task(run_daily_report_loop(settings, app.state.clients))
         try:
             yield
         finally:

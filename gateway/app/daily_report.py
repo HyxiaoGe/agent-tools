@@ -2,7 +2,8 @@
 
 - 各服务 / 产品的调用量来自网关自己的用量记录（只读）。MCP 的握手消息（initialize、tools/list、
   SSE 等）不算调用，只统计 tools/call 和 REST 请求。
-- search 内部实际调了哪家上游、转了几次备用，网关看不到，向 search 的 /usage/daily 拉取。
+- 服务内部实际调了哪家上游、被按上游的每日额度拦下几次，网关看不到，向服务拉取：
+  search 的 /usage/daily（另含转备用次数、Firecrawl 剩余 credits）、image 的 /v1/quota、reader 的 /usage/daily。
 
 手动跑：python -m app.daily_report [--day YYYY-MM-DD] [--print] [--test]
 """
@@ -37,6 +38,10 @@ _CHECK_INTERVAL_SECONDS = 300
 _MAX_ATTEMPTS_PER_DAY = 3
 _STATE_KEEP_DAYS = 10
 _ROLE_LABELS = {"primary": "（主）", "fallback": "（备用）"}
+# 各服务按上游计数的接口；字段统一为 day / available / providers[provider, limit, used, rejected]
+UPSTREAM_SUMMARY_PATHS = {"search": "/usage/daily", "image": "/v1/quota", "reader": "/usage/daily"}
+# 有请求却没有任何上游计数时的常见原因（手动查 3 天前的日期时计数已过期）
+_NO_UPSTREAM_REASONS = {"image": "全部命中缓存", "reader": "全部直接抓取"}
 
 
 @dataclass
@@ -152,6 +157,27 @@ def _search_lines(summary: dict | None, gateway_search_calls: int) -> list[str]:
     return lines
 
 
+def _quota_lines(service: str, summary: dict | None, gateway_calls: int) -> list[str]:
+    """image / reader 的上游用量，一行：上游 调用 / 上限，被拦时附次数；没用量也没调用时不占篇幅。"""
+    if summary is None:
+        return [f"{service} 上游：获取失败"]
+    if not summary.get("available", False):
+        return [f"{service} 上游：计数不可用"]
+    active = [p for p in summary.get("providers", []) if p.get("used") or p.get("rejected")]
+    if active:
+        parts = []
+        for p in active:
+            limit = p.get("limit")
+            part = f"{p['provider']} {p.get('used', 0):,}" + (f" / {limit:,}" if limit is not None else "（不限额）")
+            if p.get("rejected"):
+                part += f"（拦下 {p['rejected']:,} 次）"
+            parts.append(part)
+        return [f"{service} 上游（调用 / 每日上限）：" + " · ".join(parts)]
+    if gateway_calls:
+        return [f"{service} 上游：没有调用上游（{_NO_UPSTREAM_REASONS[service]}，或计数已过 3 天保留期）"]
+    return []
+
+
 def _limit_note(svc: ServiceStats, limit: int | None) -> str:
     # 只在用量过半或有拦截时提示上限，平时不占篇幅
     if limit is None or not (svc.limited or svc.calls >= limit / 2):
@@ -165,8 +191,11 @@ def render_report(
     previous: DayStats | None,
     search_summary: dict | None,
     limits: Mapping[str, int] | None = None,
+    upstream_summaries: Mapping[str, dict | None] | None = None,
 ) -> str:
+    """upstream_summaries：image / reader 的上游计数（键缺失表示没拉取，不出这一段）。"""
     limits = limits or {}
+    upstream_summaries = upstream_summaries or {}
     lines = [f"【agent-tools 日报】{stats.day.strftime('%m-%d')}（北京时间）"]
     overview = f"调用 {stats.calls:,} 次，失败 {stats.failed:,} 次"
     if stats.limited:
@@ -183,40 +212,55 @@ def render_report(
             )
         lines.append("按产品：" + " · ".join(f"{app} {count:,}" for app, count in _ranked(stats.products)))
 
-    search_calls = stats.services["search"].calls if "search" in stats.services else 0
-    lines.extend(_search_lines(search_summary, search_calls))
+    def calls(service: str) -> int:
+        return stats.services[service].calls if service in stats.services else 0
+
+    lines.extend(_search_lines(search_summary, calls("search")))
+    for service in ("image", "reader"):
+        if service in upstream_summaries:
+            lines.extend(_quota_lines(service, upstream_summaries[service], calls(service)))
     return "\n".join(lines)
 
 
-async def fetch_search_summary(client: httpx.AsyncClient, day: date) -> dict | None:
+async def fetch_upstream_summary(client: httpx.AsyncClient | None, service: str, day: date) -> dict | None:
+    if client is None:
+        return None
     try:
-        resp = await client.get("/usage/daily", params={"day": day.isoformat()})
+        resp = await client.get(UPSTREAM_SUMMARY_PATHS[service], params={"day": day.isoformat()})
     except httpx.HTTPError as exc:
-        logger.warning("daily_report_search_summary_failed: %s", type(exc).__name__)
+        logger.warning("daily_report_upstream_summary_failed: %s %s", service, type(exc).__name__)
         return None
     if resp.status_code != 200:
-        logger.warning("daily_report_search_summary_failed: status %s", resp.status_code)
+        logger.warning("daily_report_upstream_summary_failed: %s status %s", service, resp.status_code)
         return None
     try:
-        return resp.json()
+        data = resp.json()
     except ValueError:
-        logger.warning("daily_report_search_summary_failed: invalid json")
+        logger.warning("daily_report_upstream_summary_failed: %s invalid json", service)
         return None
+    if not isinstance(data, dict):
+        logger.warning("daily_report_upstream_summary_failed: %s invalid json", service)
+        return None
+    return data
 
 
-async def build_report(settings: Settings, search_client: httpx.AsyncClient, day: date) -> str:
+async def build_report(settings: Settings, clients: Mapping[str, httpx.AsyncClient], day: date) -> str:
+    """clients：服务名 → 指向该服务的 client（网关转发用的同一批）。"""
     stats, previous = await asyncio.gather(
         asyncio.to_thread(collect_day_stats, settings.usage_db_path, day),
         asyncio.to_thread(collect_day_stats, settings.usage_db_path, day - timedelta(days=1)),
     )
-    summary = await fetch_search_summary(search_client, day)
-    return render_report(stats, previous, summary, settings.daily_limits())
+    services = tuple(UPSTREAM_SUMMARY_PATHS)
+    summaries = await asyncio.gather(*(fetch_upstream_summary(clients.get(s), s, day) for s in services))
+    by_service = dict(zip(services, summaries, strict=True))
+    search_summary = by_service.pop("search")
+    return render_report(stats, previous, search_summary, settings.daily_limits(), by_service)
 
 
 async def send_daily_report(
-    settings: Settings, search_client: httpx.AsyncClient, day: date, *, test: bool = False
+    settings: Settings, clients: Mapping[str, httpx.AsyncClient], day: date, *, test: bool = False
 ) -> bool:
-    text = await build_report(settings, search_client, day)
+    text = await build_report(settings, clients, day)
     if test:
         text = "【测试】" + text
     ok = await send_feishu_text(
@@ -257,7 +301,7 @@ def _save_state(path: Path, state: dict, today: date) -> None:
     os.replace(tmp, path)
 
 
-async def run_due_report(settings: Settings, search_client: httpx.AsyncClient, now: datetime) -> str | None:
+async def run_due_report(settings: Settings, clients: Mapping[str, httpx.AsyncClient], now: datetime) -> str | None:
     """定时任务的一次检查：到点且当天还没发成功才发，每天最多尝试 _MAX_ATTEMPTS_PER_DAY 次。"""
     day = due_report_day(now, settings.daily_report_hour)
     if day is None:
@@ -272,7 +316,7 @@ async def run_due_report(settings: Settings, search_client: httpx.AsyncClient, n
     state[key] = entry
     _save_state(path, state, day)
     try:
-        ok = await send_daily_report(settings, search_client, day)
+        ok = await send_daily_report(settings, clients, day)
     except Exception as exc:
         logger.warning("daily_report_failed: %s", type(exc).__name__)
         ok = False
@@ -282,11 +326,11 @@ async def run_due_report(settings: Settings, search_client: httpx.AsyncClient, n
     return "sent" if ok else "failed"
 
 
-async def run_daily_report_loop(settings: Settings, search_client: httpx.AsyncClient) -> None:
+async def run_daily_report_loop(settings: Settings, clients: Mapping[str, httpx.AsyncClient]) -> None:
     logger.info("daily_report_scheduler_started: hour %s", settings.daily_report_hour)
     while True:
         try:
-            await run_due_report(settings, search_client, datetime.now(UTC))
+            await run_due_report(settings, clients, datetime.now(UTC))
         except Exception as exc:
             # 状态文件写不了等情况：记一笔，下个周期再试，不能让循环退出。
             logger.warning("daily_report_tick_failed: %s", type(exc).__name__)
@@ -295,11 +339,19 @@ async def run_daily_report_loop(settings: Settings, search_client: httpx.AsyncCl
 
 async def _cli(day: date, *, print_only: bool, test: bool) -> None:
     settings = Settings()
-    async with httpx.AsyncClient(base_url=settings.search_upstream, timeout=30, trust_env=False) as search_client:
+    upstreams = settings.upstreams()
+    clients = {
+        name: httpx.AsyncClient(base_url=upstreams[name].base_url, timeout=30, trust_env=False)
+        for name in UPSTREAM_SUMMARY_PATHS
+    }
+    try:
         if print_only:
-            print(await build_report(settings, search_client, day))
+            print(await build_report(settings, clients, day))
         else:
-            print("sent" if await send_daily_report(settings, search_client, day, test=test) else "failed")
+            print("sent" if await send_daily_report(settings, clients, day, test=test) else "failed")
+    finally:
+        for client in clients.values():
+            await client.aclose()
 
 
 def main() -> None:
