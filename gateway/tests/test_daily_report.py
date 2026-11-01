@@ -204,7 +204,7 @@ async def test_build_report_explains_missing_search_counts(settings):
 
     text = await daily_report.build_report(settings, client, DAY)
 
-    assert text.endswith("search 上游：当天没有上游计数（search 只保留 3 天）")
+    assert text.endswith("search 上游：没有调用上游（全部命中缓存，或计数已过 3 天保留期）")
     await client.aclose()
 
 
