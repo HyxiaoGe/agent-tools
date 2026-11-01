@@ -31,6 +31,25 @@ SEARCH_SUMMARY = {
     "firecrawl_remaining_credits": 69797,
     "firecrawl_billing_period_end": "2026-11-22T21:35:09.173Z",
 }
+IMAGE_SUMMARY = {
+    "day": "2026-10-31",
+    "available": True,
+    "providers": [
+        {"provider": "volcano", "limit": 100, "used": 2, "rejected": 0},
+        {"provider": "google", "limit": 50, "used": 0, "rejected": 0},
+        {"provider": "alibaba", "limit": None, "used": 1, "rejected": 0},
+        {"provider": "tavily", "limit": 100, "used": 0, "rejected": 0},
+    ],
+}
+READER_SUMMARY = {
+    "day": "2026-10-31",
+    "available": True,
+    "providers": [
+        {"provider": "firecrawl", "limit": 300, "used": 1, "rejected": 0},
+        {"provider": "tavily", "limit": 300, "used": 0, "rejected": 0},
+        {"provider": "jina", "limit": 300, "used": 0, "rejected": 1},
+    ],
+}
 
 
 @pytest.fixture
@@ -105,6 +124,27 @@ def _search_client(handler=None) -> httpx.AsyncClient:
     return client
 
 
+def _service_client(name: str, summary: dict, handler=None) -> httpx.AsyncClient:
+    requests: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return handler(request) if handler is not None else httpx.Response(200, json=summary)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handle), base_url=f"http://{name}")
+    client.requests = requests  # type: ignore[attr-defined]
+    return client
+
+
+def _clients(search: httpx.AsyncClient | None = None, *, image=None, reader=None) -> dict[str, httpx.AsyncClient]:
+    """日报用的各服务 client；image / reader 传 handler 可改返回，默认返回上面的计数。"""
+    return {
+        "search": search or _search_client(),
+        "image": _service_client("image", IMAGE_SUMMARY, image),
+        "reader": _service_client("reader", READER_SUMMARY, reader),
+    }
+
+
 class FakeFeishu:
     """替换 httpx.AsyncClient，只拦截发往飞书的请求。"""
 
@@ -156,12 +196,17 @@ def test_collect_day_stats_handles_missing_database(tmp_path):
 
 async def test_build_report_combines_gateway_counts_with_search_upstreams(settings):
     _seed(settings)
-    client = _search_client()
+    clients = _clients()
+    client = clients["search"]
 
-    text = await daily_report.build_report(settings, client, DAY)
+    text = await daily_report.build_report(settings, clients, DAY)
 
     assert client.requests[0].url.path == "/usage/daily"
     assert client.requests[0].url.params["day"] == "2026-10-31"
+    [image_request] = clients["image"].requests
+    assert (image_request.url.path, image_request.url.params["day"]) == ("/v1/quota", "2026-10-31")
+    [reader_request] = clients["reader"].requests
+    assert (reader_request.url.path, reader_request.url.params["day"]) == ("/usage/daily", "2026-10-31")
     assert text == "\n".join(
         [
             "【agent-tools 日报】10-31（北京时间）",
@@ -180,18 +225,21 @@ async def test_build_report_combines_gateway_counts_with_search_upstreams(settin
             "· 转备用 10 次（报错 2，结果不足 8）",
             # 计费周期结束 11-22 21:35 UTC = 北京 11-23
             "Firecrawl 剩余 69,797 credits（计费周期至 11-23）",
+            "image 上游（调用 / 每日上限）：volcano 2 / 100 · alibaba 1（不限额）",
+            "reader 上游（调用 / 每日上限）：firecrawl 1 / 300 · jina 0 / 300（拦下 1 次）",
         ]
     )
-    await client.aclose()
+    for c in clients.values():
+        await c.aclose()
 
 
 async def test_build_report_degrades_when_search_summary_unavailable(settings):
     _seed(settings)
     client = _search_client(lambda _r: httpx.Response(503, text="down"))
 
-    text = await daily_report.build_report(settings, client, DAY)
+    text = await daily_report.build_report(settings, _clients(client), DAY)
 
-    assert text.endswith("search 上游：获取失败")
+    assert "\nsearch 上游：获取失败\n" in text
     await client.aclose()
 
 
@@ -202,10 +250,55 @@ async def test_build_report_explains_missing_search_counts(settings):
     empty["firecrawl_remaining_credits"] = None
     client = _search_client(lambda _r: httpx.Response(200, json=empty))
 
-    text = await daily_report.build_report(settings, client, DAY)
+    text = await daily_report.build_report(settings, _clients(client), DAY)
 
-    assert text.endswith("search 上游：没有调用上游（全部命中缓存，或计数已过 3 天保留期）")
+    assert "\nsearch 上游：没有调用上游（全部命中缓存，或计数已过 3 天保留期）\n" in text
     await client.aclose()
+
+
+async def test_build_report_degrades_per_service_when_quota_summaries_fail(settings, caplog):
+    caplog.set_level(logging.WARNING, logger="gateway")
+    _seed(settings)
+
+    def boom(_request):
+        raise httpx.ConnectError("image down")
+
+    clients = _clients(image=boom, reader=lambda _r: httpx.Response(200, json={**READER_SUMMARY, "available": False}))
+    text = await daily_report.build_report(settings, clients, DAY)
+
+    assert text.splitlines()[-2:] == ["image 上游：获取失败", "reader 上游：计数不可用"]
+    assert "daily_report_upstream_summary_failed: image ConnectError" in caplog.text
+    # search 照常
+    assert "· deepseek（主） 312 / 1000" in text
+
+    missing = {"search": _search_client()}
+    assert (await daily_report.build_report(settings, missing, DAY)).splitlines()[-2:] == [
+        "image 上游：获取失败",
+        "reader 上游：获取失败",
+    ]
+
+
+async def test_quota_lines_explain_missing_counts_and_skip_idle_services(settings):
+    _seed(settings)
+    idle_image = {**IMAGE_SUMMARY, "providers": [{**p, "used": 0} for p in IMAGE_SUMMARY["providers"]]}
+    idle_reader = {
+        **READER_SUMMARY,
+        "providers": [{**p, "used": 0, "rejected": 0} for p in READER_SUMMARY["providers"]],
+    }
+    clients = _clients(
+        image=lambda _r: httpx.Response(200, json=idle_image),
+        reader=lambda _r: httpx.Response(200, json=idle_reader),
+    )
+
+    text = await daily_report.build_report(settings, clients, DAY)
+    assert text.splitlines()[-2:] == [
+        "image 上游：没有调用上游（全部命中缓存，或计数已过 3 天保留期）",
+        "reader 上游：没有调用上游（全部直接抓取，或计数已过 3 天保留期）",
+    ]
+
+    # 前一天 image / reader 都没被调用：没有上游计数就不出这两行
+    quiet = await daily_report.build_report(settings, clients, date(2026, 10, 30))
+    assert "image 上游" not in quiet and "reader 上游" not in quiet
 
 
 def test_due_report_day_waits_until_configured_beijing_hour():
@@ -217,11 +310,11 @@ def test_due_report_day_waits_until_configured_beijing_hour():
 async def test_run_due_report_sends_signed_message_once_per_day(settings, monkeypatch):
     _seed(settings)
     feishu = FakeFeishu(monkeypatch)
-    client = _search_client()
+    clients = _clients()
 
-    assert await daily_report.run_due_report(settings, client, datetime(2026, 11, 1, 0, 30, tzinfo=UTC)) is None
-    assert await daily_report.run_due_report(settings, client, datetime(2026, 11, 1, 1, 5, tzinfo=UTC)) == "sent"
-    assert await daily_report.run_due_report(settings, client, datetime(2026, 11, 1, 1, 10, tzinfo=UTC)) is None
+    assert await daily_report.run_due_report(settings, clients, datetime(2026, 11, 1, 0, 30, tzinfo=UTC)) is None
+    assert await daily_report.run_due_report(settings, clients, datetime(2026, 11, 1, 1, 5, tzinfo=UTC)) == "sent"
+    assert await daily_report.run_due_report(settings, clients, datetime(2026, 11, 1, 1, 10, tzinfo=UTC)) is None
 
     assert len(feishu.posted) == 1
     sent = feishu.posted[0]
@@ -233,7 +326,8 @@ async def test_run_due_report_sends_signed_message_once_per_day(settings, monkey
     assert sent["json"]["sign"] == expected
     state = json.loads(open(settings.daily_report_state_path).read())
     assert state["2026-10-31"] == {"attempts": 1, "status": "sent"}
-    await client.aclose()
+    for client in clients.values():
+        await client.aclose()
 
 
 async def test_run_due_report_retries_failed_send_at_most_three_times(settings, monkeypatch):
@@ -242,7 +336,7 @@ async def test_run_due_report_retries_failed_send_at_most_three_times(settings, 
     client = _search_client()
     now = datetime(2026, 11, 1, 1, 5, tzinfo=UTC)
 
-    results = [await daily_report.run_due_report(settings, client, now) for _ in range(5)]
+    results = [await daily_report.run_due_report(settings, _clients(client), now) for _ in range(5)]
 
     assert results == ["failed", "failed", "failed", None, None]
     assert len(feishu.posted) == 3
@@ -268,7 +362,7 @@ async def test_manual_test_send_prefixes_title_and_does_not_touch_schedule_state
     feishu = FakeFeishu(monkeypatch)
     client = _search_client()
 
-    assert await daily_report.send_daily_report(settings, client, DAY, test=True) is True
+    assert await daily_report.send_daily_report(settings, _clients(client), DAY, test=True) is True
 
     assert feishu.posted[0]["json"]["content"]["text"].startswith("【测试】【agent-tools 日报】10-31")
     assert not os.path.exists(settings.daily_report_state_path)
