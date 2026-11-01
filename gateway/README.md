@@ -40,8 +40,19 @@ agent-tools 的统一入口。调用方只配一个地址和一把产品密钥�
 | 503 | `upstream_busy` | 该服务连接池已满且排队超过 `POOL_WAIT_SECONDS` |
 | 504 | `upstream_timeout` | 上游超过该服务的超时 |
 | 502 | `upstream_unreachable` | 连不上上游 |
+| 429 | `daily_limit_exceeded` | 该服务当天的调用已达每日上限，`Retry-After` 为距北京时间 0 点的秒数 |
 
 每个服务有独立的连接池和超时，某个服务堆积慢请求不会拖住其他服务。
+
+## 每日上限
+
+最外层的兜底：防止批量实验或失控循环把付费上游打穿。`SERVICE_DAILY_LIMITS`（`服务=次数`，逗号分隔，北京时间自然日）控制各服务每天最多转发多少次调用，超出直接返回 429，不转发，记账为 `outcome=limited`。
+
+- 默认 `search=2000,reader=1000,image=200,weather=1000,amap=1000,tmap=1000,flyai=100`，约为 10-23 ~ 11-01 单日峰值的 5~25 倍；未列出的服务（免费的 trends、context7）不限，`0` 表示当天一律拒绝。写了不存在的服务名，网关起不来。
+- 只算真正的调用：REST 请求和 MCP `tools/call`。MCP 握手（`initialize`、`tools/list`、SSE）不算也不拦，会话可以照常建立。
+- 所有产品共用一个计数。计数在内存里，每天第一次用到时从用量记录补回当天已有的调用数，重启不清零；被拦下的请求不计入。
+- 用到 `LIMIT_ALERT_RATIO`（默认 0.8）和用满时各推一次飞书巡检群（`LIMIT_ALERT_WEBHOOK` / `LIMIT_ALERT_SIGN_SECRET`，留空只写日志），每个服务每天各一次。
+- 服务内部还有按上游的额度（如 search 的 `PROVIDER_DAILY_LIMITS`），通常先触发。
 
 ## 用量
 
@@ -55,7 +66,7 @@ docker exec agent-tools-gateway python -m app.usage_report --app-id fusion --day
 
 配置了 `DAILY_REPORT_WEBHOOK` 时，北京时间每天 `DAILY_REPORT_HOUR`（默认 9）点后把前一天的汇总推到飞书「AI 成本&额度」群：
 
-- 总调用 / 失败次数（附前一天总量），按服务（含 MCP 工具前 3）和按产品的调用量。MCP 的握手消息（initialize、tools/list、SSE）不算调用，只统计 `tools/call` 和 REST 请求。
+- 总调用 / 失败次数（附前一天总量），按服务（含 MCP 工具前 3）和按产品的调用量。用量过半或有拦截的服务会附上每日上限和被拦下的次数。MCP 的握手消息（initialize、tools/list、SSE）不算调用，只统计 `tools/call` 和 REST 请求。
 - search 实际调了哪家上游、被额度拦下次数、转备用次数和 Firecrawl 剩余 credits：网关看不到这些，向 search 的 `/usage/daily` 拉取。
 
 哪天已发送记在 `DAILY_REPORT_STATE_PATH`（默认 `storage/daily_report_state.json`），重启不重发；发送失败每天最多尝试 3 次。手动执行：

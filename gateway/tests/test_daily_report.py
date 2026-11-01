@@ -11,7 +11,7 @@ from datetime import UTC, date, datetime
 import httpx
 import pytest
 
-from app import daily_report
+from app import daily_report, feishu
 from app.config import Settings
 from app.usage import UsageRecord, UsageStore
 
@@ -125,7 +125,7 @@ class FakeFeishu:
                 fake.posted.append({"url": url, "json": json})
                 return httpx.Response(status, json={"code": code, "msg": "x"}, request=httpx.Request("POST", url))
 
-        monkeypatch.setattr(daily_report, "_feishu_client", _Client)
+        monkeypatch.setattr(feishu, "_feishu_client", _Client)
 
 
 def test_day_bounds_follow_beijing_midnight():
@@ -254,7 +254,9 @@ async def test_send_failure_logs_never_contain_the_webhook(settings, monkeypatch
     FakeFeishu(monkeypatch, error=error)
     caplog.set_level(logging.INFO, logger="gateway")
 
-    ok = await daily_report.send_feishu_text(settings.daily_report_webhook.get_secret_value(), "", "hi")
+    ok = await feishu.send_feishu_text(
+        settings.daily_report_webhook.get_secret_value(), "", "hi", purpose="daily_report"
+    )
 
     assert ok is False
     assert "secret-token" not in caplog.text

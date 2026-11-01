@@ -34,10 +34,19 @@ _MCP_TOOL_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.:/-]{1,128}")
 _MCP_BODY_PARSE_LIMIT = 64 * 1024
 
 
+def is_mcp_path(path: str) -> bool:
+    # image-service 的 MCP 路径带尾斜杠（/mcp 会被重定向到 /mcp/）。
+    return path.rstrip("/").rsplit("/", 1)[-1] == "mcp"
+
+
+def counts_as_call(path: str, tool: str | None) -> bool:
+    """日报和每日上限只算真正的调用：REST 请求和 MCP tools/call；MCP 握手（initialize、tools/list、SSE）不算。"""
+    return bool(tool) or not is_mcp_path(path)
+
+
 def mcp_tool_name(path: str, body: bytes) -> str | None:
     """MCP 的工具调用都打在同一个 /mcp 路径上，从 JSON-RPC 请求体里取出工具名只用于记账，不改转发。"""
-    # image-service 的 MCP 路径带尾斜杠（/mcp 会被重定向到 /mcp/）。
-    if path.rstrip("/").rsplit("/", 1)[-1] != "mcp" or not body or len(body) > _MCP_BODY_PARSE_LIMIT:
+    if not is_mcp_path(path) or not body or len(body) > _MCP_BODY_PARSE_LIMIT:
         return None
     try:
         message = json.loads(body)
@@ -114,6 +123,52 @@ def _error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse({"error": code, "message": message}, status_code=status_code)
 
 
+async def record_usage(
+    usage: UsageStore,
+    request: Request,
+    caller: Caller,
+    *,
+    service: str,
+    path: str,
+    tool: str | None,
+    status: int,
+    outcome: str,
+    duration_ms: int,
+) -> None:
+    record = UsageRecord(
+        ts=now_iso(),
+        app_id=caller.app_id,
+        user_id=caller.user,
+        scene=caller.scene,
+        request_id=caller.request_id,
+        service=service,
+        method=request.method,
+        path=f"/{path}",
+        tool=tool,
+        status=status,
+        outcome=outcome,
+        duration_ms=duration_ms,
+    )
+    logger.info(
+        "proxied",
+        extra={
+            "service": service,
+            "app_id": caller.app_id,
+            "path": record.path,
+            "tool": tool,
+            "status": status,
+            "outcome": outcome,
+            "duration_ms": duration_ms,
+            "request_id": caller.request_id,
+        },
+    )
+    try:
+        await usage.record(record)
+    except Exception:
+        # 记账失败不能影响已经返回给调用方的结果，只留日志。
+        logger.exception("usage_record_failed", extra={"service": service, "app_id": caller.app_id})
+
+
 async def forward(
     request: Request,
     *,
@@ -132,39 +187,17 @@ async def forward(
     async def finish(status: int, outcome: str) -> None:
         if caller is None:
             return
-        duration_ms = int((time.monotonic() - started) * 1000)
-        record = UsageRecord(
-            ts=now_iso(),
-            app_id=caller.app_id,
-            user_id=caller.user,
-            scene=caller.scene,
-            request_id=caller.request_id,
+        await record_usage(
+            usage,
+            request,
+            caller,
             service=service,
-            method=request.method,
-            path=f"/{path}",
+            path=path,
             tool=tool,
             status=status,
             outcome=outcome,
-            duration_ms=duration_ms,
+            duration_ms=int((time.monotonic() - started) * 1000),
         )
-        logger.info(
-            "proxied",
-            extra={
-                "service": service,
-                "app_id": caller.app_id,
-                "path": record.path,
-                "tool": tool,
-                "status": status,
-                "outcome": outcome,
-                "duration_ms": duration_ms,
-                "request_id": caller.request_id,
-            },
-        )
-        try:
-            await usage.record(record)
-        except Exception:
-            # 记账失败不能影响已经返回给调用方的结果，只留日志。
-            logger.exception("usage_record_failed", extra={"service": service, "app_id": caller.app_id})
 
     upstream_request = client.build_request(
         request.method,

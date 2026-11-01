@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 from collections.abc import Mapping
@@ -14,7 +15,9 @@ from starlette.responses import JSONResponse, Response
 from app.auth import AuthError, authenticate, authorize_service
 from app.config import Settings, Upstream
 from app.daily_report import run_daily_report_loop
-from app.proxy import forward, mcp_tool_name
+from app.feishu import send_feishu_text
+from app.limits import DailyLimiter
+from app.proxy import counts_as_call, forward, mcp_tool_name, record_usage
 from app.usage import UsageStore
 
 _LOG_FIELDS = ("service", "app_id", "path", "tool", "status", "outcome", "duration_ms", "request_id")
@@ -92,6 +95,20 @@ def create_app(
         _configure_logging()
         app.state.clients = {name: _client(up, settings, transports.get(name)) for name, up in upstreams.items()}
         app.state.usage = UsageStore(settings.usage_db_path, settings.usage_retention_days)
+        alert_webhook = settings.limit_alert_webhook.get_secret_value().strip()
+        alert = (
+            functools.partial(
+                send_feishu_text,
+                alert_webhook,
+                settings.limit_alert_sign_secret.get_secret_value().strip(),
+                purpose="limit_alert",
+            )
+            if alert_webhook
+            else None
+        )
+        app.state.limiter = DailyLimiter(
+            settings.daily_limits(), settings.usage_db_path, settings.limit_alert_ratio, alert
+        )
         # 配了日报 webhook 才起定时任务；单 worker 部署，哪天已发记在状态文件里，重启不重发。
         report_task = None
         if settings.daily_report_webhook.get_secret_value().strip():
@@ -103,6 +120,7 @@ def create_app(
                 report_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await report_task
+            await app.state.limiter.aclose()
             for client in app.state.clients.values():
                 await client.aclose()
             app.state.usage.close()
@@ -138,6 +156,29 @@ def create_app(
                 return JSONResponse(
                     {"error": "payload_too_large", "message": "Request body too large."}, status_code=413
                 )
+        tool = mcp_tool_name(path, bytes(body))
+        if caller is not None and counts_as_call(path, tool):
+            decision = await request.app.state.limiter.admit(service)
+            if not decision.allowed:
+                await record_usage(
+                    request.app.state.usage,
+                    request,
+                    caller,
+                    service=service,
+                    path=path,
+                    tool=tool,
+                    status=429,
+                    outcome="limited",
+                    duration_ms=0,
+                )
+                return JSONResponse(
+                    {
+                        "error": "daily_limit_exceeded",
+                        "message": f"{service} reached its daily call limit; it resets at 00:00 Asia/Shanghai.",
+                    },
+                    status_code=429,
+                    headers={"Retry-After": str(decision.retry_after)},
+                )
         return await forward(
             request,
             service=service,
@@ -146,7 +187,7 @@ def create_app(
             client=request.app.state.clients[service],
             caller=caller,
             body=bytes(body),
-            tool=mcp_tool_name(path, bytes(body)),
+            tool=tool,
             usage=request.app.state.usage,
         )
 
