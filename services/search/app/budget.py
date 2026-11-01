@@ -114,7 +114,8 @@ async def _alert_once(provider: str, kind: str, day: str, text: str) -> None:
         log.warning("provider_budget_alert", provider=provider, kind=kind, day=day)
         await send_feishu_text(text)
     except Exception as exc:
-        log.warning("provider_budget_alert_failed", provider=provider, kind=kind, error=str(exc))
+        # 只记异常类型：httpx 的异常信息可能带 webhook 地址
+        log.warning("provider_budget_alert_failed", provider=provider, kind=kind, error=type(exc).__name__)
 
 
 async def send_feishu_text(text: str) -> None:
@@ -130,8 +131,11 @@ async def send_feishu_text(text: str) -> None:
         payload["sign"] = base64.b64encode(hmac.new(string_to_sign, digestmod=hashlib.sha256).digest()).decode()
     async with httpx.AsyncClient(timeout=5) as client:
         resp = await client.post(url, json=payload)
-        resp.raise_for_status()
-        body = resp.json()
+    # 不用 raise_for_status：它的异常信息带完整 webhook 地址（地址即密钥），会被写进日志。
+    if resp.status_code != 200:
+        log.warning("feishu_alert_http_error", status=resp.status_code)
+        return
+    body = resp.json()
     if body.get("code", 0) != 0:
         log.warning("feishu_alert_rejected", code=body.get("code"), msg=body.get("msg"))
 

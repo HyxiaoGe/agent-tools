@@ -418,3 +418,33 @@ async def test_daily_usage_marks_unavailable_when_redis_is_down(monkeypatch):
     assert summary.fallback == {"error": 0, "insufficient": 0}
     assert all(p.used == 0 for p in summary.providers)
     assert summary.firecrawl_remaining_credits is None
+
+
+async def test_send_feishu_text_never_logs_webhook_url_on_http_error(monkeypatch):
+    from app import budget
+
+    url = "https://open.feishu.cn/open-apis/bot/v2/hook/secret-token-123"
+    logged: list[dict] = []
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: int):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        async def post(self, post_url: str, json: dict):
+            return httpx.Response(500, text="boom", request=httpx.Request("POST", post_url))
+
+    monkeypatch.setattr(budget.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(budget.log, "warning", lambda event, **kw: logged.append({"event": event, **kw}))
+    monkeypatch.setattr(budget.settings, "BUDGET_ALERT_WEBHOOK", url)
+    monkeypatch.setattr(budget.settings, "BUDGET_ALERT_SIGN_SECRET", "")
+
+    await budget.send_feishu_text("hello")
+
+    assert logged == [{"event": "feishu_alert_http_error", "status": 500}]
+    assert "secret-token-123" not in str(logged)
