@@ -106,6 +106,8 @@ Claude Code 集成配置：
 | `PROVIDER_DAILY_LIMITS` | `brave=100,tavily=100,firecrawl=500,deepseek=1000` | 每个 provider 每日上游调用上限（北京时间自然日）。主调用、fallback、MCP 每次真正请求上游都占一个名额，缓存命中不占。超额后跳过该 provider，所有候选都没额度时 `/search` 返回 503。未列出的 provider 不限，`0` 表示停用 |
 | `BUDGET_ALERT_RATIO` | `0.8` | 用量达到上限的这个比例时预警一次（每个 provider 每天一次），达到上限时再告警一次 |
 | `BUDGET_ALERT_WEBHOOK` / `BUDGET_ALERT_SIGN_SECRET` | — | 额度告警用的飞书自定义机器人 webhook 与签名密钥；留空只写日志 |
+| `DAILY_REPORT_WEBHOOK` / `DAILY_REPORT_SIGN_SECRET` | — | 每日用量日报的飞书自定义机器人 webhook 与签名密钥（发到「AI 成本&额度」群）；留空不发 |
+| `DAILY_REPORT_HOUR` | `9` | 北京时间每天几点后发送前一天的日报（每天一次，重启不重发）。手动：`python -m app.daily_report [--day YYYY-MM-DD] [--print] [--test]` |
 
 ## 技术栈
 

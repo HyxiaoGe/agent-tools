@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -7,6 +8,8 @@ from slowapi.errors import RateLimitExceeded
 
 from app.budget import ProviderBudgetExceeded
 from app.cache import close_redis
+from app.config import settings
+from app.daily_report import run_daily_report_loop
 from app.limiter import limiter
 from app.logger import setup_logging
 from app.mcp.server import mcp
@@ -18,9 +21,17 @@ mcp_app = mcp.http_app()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
-    async with mcp_app.lifespan(app):
-        yield
-    await close_redis()
+    # 配了日报 webhook 才起定时任务；单 worker 部署，发送去重靠 Redis 标记，重启不会重复发。
+    report_task = asyncio.create_task(run_daily_report_loop()) if settings.DAILY_REPORT_WEBHOOK.strip() else None
+    try:
+        async with mcp_app.lifespan(app):
+            yield
+    finally:
+        if report_task is not None:
+            report_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await report_task
+        await close_redis()
 
 
 app = FastAPI(title="Search Service", version="0.1.0", lifespan=lifespan)

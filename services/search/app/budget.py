@@ -117,12 +117,13 @@ async def _alert_once(provider: str, kind: str, day: str, text: str) -> None:
         log.warning("provider_budget_alert_failed", provider=provider, kind=kind, error=str(exc))
 
 
-async def send_feishu_text(text: str) -> None:
-    url = settings.BUDGET_ALERT_WEBHOOK.strip()
+async def send_feishu_text(text: str, *, webhook: str | None = None, secret: str | None = None) -> bool:
+    """发飞书自定义机器人文本消息，飞书返回 code 0 时为 True。默认发到额度告警群（巡检群）。"""
+    url = (settings.BUDGET_ALERT_WEBHOOK if webhook is None else webhook).strip()
     if not url:
-        return
+        return False
     payload: dict = {"msg_type": "text", "content": {"text": text}}
-    secret = settings.BUDGET_ALERT_SIGN_SECRET.strip()
+    secret = (settings.BUDGET_ALERT_SIGN_SECRET if secret is None else secret).strip()
     if secret:
         timestamp = str(int(time.time()))
         string_to_sign = f"{timestamp}\n{secret}".encode()
@@ -134,11 +135,37 @@ async def send_feishu_text(text: str) -> None:
         body = resp.json()
     if body.get("code", 0) != 0:
         log.warning("feishu_alert_rejected", code=body.get("code"), msg=body.get("msg"))
+        return False
+    return True
 
 
-async def get_budget_status() -> list[ProviderBudgetStatus]:
+# 转备用的次数，按触发原因分开计：主 provider 报错 / 结果不足。只用于日报统计，不参与额度判断。
+FALLBACK_REASONS = ("error", "insufficient")
+
+
+def _fallback_key(reason: str, day: str) -> str:
+    return f"stats:fallback:{reason}:day:{day}"
+
+
+async def record_fallback(reason: str) -> None:
+    key = _fallback_key(reason, budget_day())
+    try:
+        redis = await get_redis()
+        if await redis.incr(key) == 1:
+            await redis.expire(key, _KEY_TTL_SECONDS)
+    except Exception as exc:
+        log.warning("fallback_stat_failed", reason=reason, error=str(exc))
+
+
+async def get_fallback_counts(day: str) -> dict[str, int]:
+    redis = await get_redis()
+    values = await redis.mget([_fallback_key(reason, day) for reason in FALLBACK_REASONS])
+    return {reason: int(value or 0) for reason, value in zip(FALLBACK_REASONS, values, strict=True)}
+
+
+async def get_budget_status(day: str | None = None) -> list[ProviderBudgetStatus]:
     limits = parse_daily_limits(settings.PROVIDER_DAILY_LIMITS)
-    day = budget_day()
+    day = day or budget_day()
     names = sorted(limits)
     used_values: list = [None] * len(names)
     rejected_values: list = [None] * len(names)

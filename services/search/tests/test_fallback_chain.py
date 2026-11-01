@@ -130,7 +130,7 @@ def test_settings_refuse_to_start_with_unknown_fallback_provider():
 # ---- route：链上依次尝试 ----
 
 
-async def test_primary_error_walks_chain_until_a_provider_succeeds(monkeypatch):
+async def test_primary_error_walks_chain_until_a_provider_succeeds(monkeypatch, fallback_stats):
     primary = FakeProvider("deepseek", error=RuntimeError("401"))
     firecrawl = FakeProvider("firecrawl", error=TimeoutError())
     tavily = FakeProvider("tavily", count=4)
@@ -144,9 +144,10 @@ async def test_primary_error_walks_chain_until_a_provider_succeeds(monkeypatch):
     assert response.provider_chain == ["deepseek", "firecrawl", "tavily"]
     assert cached == ["tavily"]
     assert (primary.calls, firecrawl.calls, tavily.calls) == (1, 1, 1)
+    assert fallback_stats == ["error"]
 
 
-async def test_chain_stops_at_first_provider_with_enough_results(monkeypatch):
+async def test_chain_stops_at_first_provider_with_enough_results(monkeypatch, fallback_stats):
     primary = FakeProvider("deepseek", count=0)
     firecrawl = FakeProvider("firecrawl", count=4)
     tavily = FakeProvider("tavily", count=4)
@@ -157,6 +158,7 @@ async def test_chain_stops_at_first_provider_with_enough_results(monkeypatch):
     assert response.result_provider == "firecrawl"
     assert response.provider_chain == ["deepseek", "firecrawl"]
     assert tavily.calls == 0
+    assert fallback_stats == ["insufficient"]
 
 
 async def test_insufficient_chain_keeps_the_provider_with_most_results(monkeypatch):
@@ -175,7 +177,7 @@ async def test_insufficient_chain_keeps_the_provider_with_most_results(monkeypat
     assert cached == []
 
 
-async def test_primary_error_with_thin_fallback_does_not_rerun_chain(monkeypatch):
+async def test_primary_error_with_thin_fallback_does_not_rerun_chain(monkeypatch, fallback_stats):
     primary = FakeProvider("deepseek", error=RuntimeError("boom"))
     firecrawl = FakeProvider("firecrawl", count=1)
     tavily = FakeProvider("tavily", count=0)
@@ -186,9 +188,10 @@ async def test_primary_error_with_thin_fallback_does_not_rerun_chain(monkeypatch
     assert response.result_provider == "firecrawl"
     # 报错路径已经把整条链走完，结果不足的补搜不能再把链跑一遍
     assert (firecrawl.calls, tavily.calls) == (1, 1)
+    assert fallback_stats == ["error"]
 
 
-async def test_all_providers_failing_reraises_primary_error(monkeypatch):
+async def test_all_providers_failing_reraises_primary_error(monkeypatch, fallback_stats):
     primary = FakeProvider("deepseek", error=RuntimeError("primary down"))
     firecrawl = FakeProvider("firecrawl", error=RuntimeError("429"))
     tavily = FakeProvider("tavily", error=ValueError("tavily provider does not support image search"))
@@ -197,6 +200,8 @@ async def test_all_providers_failing_reraises_primary_error(monkeypatch):
     with pytest.raises(RuntimeError, match="primary down"):
         await _search(search_route)
     assert (firecrawl.calls, tavily.calls) == (1, 1)
+    # 全部失败、请求抛错时也要计上这次转备用
+    assert fallback_stats == ["error"]
 
 
 async def test_image_search_falls_through_unsupported_providers(monkeypatch):

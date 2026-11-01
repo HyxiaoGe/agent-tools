@@ -1,5 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Request
 
+from app.budget import record_fallback
 from app.cache import get_cached, set_cached
 from app.config import settings
 from app.limiter import limiter
@@ -69,7 +70,7 @@ async def search(
     except Exception as e:
         log.warning("primary_search_failed", provider=actual_provider, error=_error_text(e))
         fallback_result = await _run_fallback_chain(
-            body, actual_provider, min_results=min_acceptable, background_tasks=background_tasks
+            body, actual_provider, reason="error", min_results=min_acceptable, background_tasks=background_tasks
         )
         if fallback_result is None:
             raise
@@ -80,6 +81,7 @@ async def search(
         fallback_result = await _run_fallback_chain(
             body,
             actual_provider,
+            reason="insufficient",
             min_results=min_acceptable,
             primary_results=len(result.results),
             background_tasks=background_tasks,
@@ -108,14 +110,20 @@ async def _run_fallback_chain(
     body: SearchRequest,
     actual_provider: str,
     *,
+    reason: str,
     min_results: int,
     background_tasks: BackgroundTasks,
     primary_results: int | None = None,
 ) -> SearchResponse | None:
     """按备用链顺序尝试，结果够 min_results 条即停；都不够时返回条数最多的那个，全部失败返回 None。"""
+    chain = get_fallback_providers(actual_provider)
+    if chain:
+        # 日报统计“转备用”次数，按请求计一次。直接 await 而不是放后台任务：
+        # 备用全失败时请求会抛错，后台任务不会执行，这种最该记的情况就漏了。
+        await record_fallback(reason)
     best: SearchResponse | None = None
     tried = [actual_provider]
-    for fb_name, fb_provider in get_fallback_providers(actual_provider):
+    for fb_name, fb_provider in chain:
         tried.append(fb_name)
         log.info(
             "fallback_search",
