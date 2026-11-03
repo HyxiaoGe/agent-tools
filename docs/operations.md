@@ -11,7 +11,7 @@
 | `services/trends` | trends-mcp | 3333（仅 agent-tools-internal） | TrendRadar 热榜 MCP（官方镜像转存，只读 dev 上 TrendRadar 的数据） |
 | `services/amap` | amap-mcp | 3334（仅 agent-tools-internal） | 高德官方 MCP 的代理：注入密钥、只读白名单、配额用尽标记；付费服务，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
 | `services/context7` | context7-mcp | 3335（仅 agent-tools-internal） | Context7 官方 MCP 的代理：注入密钥、文档工具白名单、限流标记；密钥按账号限流，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
-| `services/weather` | weather-service | 8092（仅 agent-tools-internal） | 和风天气的只读代理：持有 Ed25519 凭证签 JWT、城市查询与逐日 / 逐小时预报、字段归一；按项目计费，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
+| `services/weather` | weather-service | 8092（仅 agent-tools-internal） | 和风天气：持有 Ed25519 凭证签 JWT；MCP 工具 `get_weather`（`/weather/mcp`）和城市查询、逐日 / 逐小时预报的 REST 接口；按项目计费，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
 | `services/flyai` | flyai-adapter | 8093（仅 agent-tools-internal） | FlyAI 航班 / 高铁查询适配器：第三方 CLI 以隔离子进程运行、持有 API Key、字段投影；按用户并发隔离；付费服务，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
 | `services/tmap` | tmap-mcp | 3336（仅 agent-tools-internal） | 腾讯地图（腾讯位置服务）官方 MCP 的代理：注入密钥、只读白名单；按 key 计每日配额，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
 
