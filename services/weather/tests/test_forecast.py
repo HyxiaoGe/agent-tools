@@ -14,7 +14,6 @@ import pytest
 from fastmcp import Client
 
 from app.forecast import (
-    CITY_CACHE_SECONDS,
     FORECAST_CACHE_SECONDS,
     Forecaster,
     ForecastError,
@@ -68,7 +67,7 @@ def raw_city(c: City) -> dict:
 HANGZHOU = city("杭州", "杭州", "浙江省", lid="101210101")
 
 
-def raw_daily(first_day: int = 8) -> list[dict]:
+def raw_daily(first_day: int = 8, count: int = 15) -> list[dict]:
     return [
         {
             "fxDate": f"2026-10-{day:02d}",
@@ -81,20 +80,20 @@ def raw_daily(first_day: int = 8) -> list[dict]:
             "windScaleDay": "1-3",
             "windScaleNight": "3-4",
         }
-        for day in range(first_day, first_day + 7)
+        for day in range(first_day, first_day + count)
     ]
 
 
-# 从 10-08 16:00 起 24 小时：今天 16–23 时 8 个，明天 0–15 时 16 个；19–21 时下小雨
+# 从 10-08 16:00 起 168 小时：今天 16–23 时 8 个，明天到 10-14 每天 24 个，10-15 0–15 时 16 个；每天 19–21 时下小雨
 RAW_HOURLY = [
     {
         "fxTime": f"2026-10-{8 + (16 + i) // 24:02d}T{(16 + i) % 24:02d}:00+08:00",
-        "temp": str(20 - i // 4),
-        "text": "小雨" if 3 <= i <= 5 else "多云",
-        "pop": "70" if 3 <= i <= 5 else "10",
-        "precip": "0.6" if 3 <= i <= 5 else "0.0",
+        "temp": str(20 - i % 24 // 4),
+        "text": "小雨" if 3 <= i % 24 <= 5 else "多云",
+        "pop": "70" if 3 <= i % 24 <= 5 else "10",
+        "precip": "0.6" if 3 <= i % 24 <= 5 else "0.0",
     }
-    for i in range(24)
+    for i in range(168)
 ]
 
 
@@ -119,7 +118,7 @@ class FakeQWeather:
                 return httpx.Response(self.fail[name], json={"code": str(self.fail[name])})
             if name == "lookup":
                 return httpx.Response(200, json={"code": "200", "location": self.cities})
-            if name == "7d":
+            if name == "15d":
                 return httpx.Response(200, json={"code": "200", "daily": self.daily})
             return httpx.Response(200, json={"code": "200", "hourly": self.hourly})
 
@@ -175,10 +174,29 @@ def test_resolution_rules():
     assert select_city("广州", [guangzhou, twin]) is guangzhou  # 写法一模一样的重复条目：取第一个
     minor = city("广州", "Y", "X", country="Nowhere", rank=85)
     assert select_city("广州", [minor, guangzhou]) is guangzhou
+    # 同名分不出时，排名比最前的落后超过 10 的不要（排名是 11-04 在 dev 上查的）
+    paris = city("巴黎", "巴黎", "法兰西岛大区", country="法国", rank=20)
+    paris_ky = city("巴黎", "波旁县", "Kentucky", country="美国", rank=75)
+    assert select_city("巴黎", [paris, paris_ky]) is paris
+    dc = city("华盛顿", "华盛顿", "哥伦比亚特区", country="美国", rank=30)
+    others = [
+        city("华盛顿", "桑德兰", "英格兰", country="英国", rank=55),
+        city("华盛顿", "华盛顿县", "犹他州", country="美国", rank=62),
+    ]
+    assert select_city("华盛顿", [*others, dc]) is dc
 
     with pytest.raises(ForecastError) as e:
         select_city("朝阳", [chaoyang_ln, chaoyang_bj])
     assert e.value.code == "ambiguous_location" and e.value.candidates == ["辽宁省·朝阳", "北京市·北京·朝阳"]
+    # 差得不多的照样问；落后多的不进候选
+    chaoyang_cc = city("朝阳", "长春", "吉林省", rank=35)
+    with pytest.raises(ForecastError) as e:
+        select_city("朝阳", [city("朝阳", "朝阳", "辽宁省", rank=13), chaoyang_bj, chaoyang_cc])
+    assert e.value.candidates == ["辽宁省·朝阳", "北京市·北京·朝阳"]
+    # 有没给排名的就不比
+    with pytest.raises(ForecastError) as e:
+        select_city("巴黎", [paris, city("巴黎", "波旁县", "Kentucky", country="美国", rank=None)])
+    assert e.value.code == "ambiguous_location"
 
     for query, cities in (
         ("乌镇", [city("乌镇", "厄尔-卢瓦省", "中央-卢瓦尔河谷大区", country="法国", rank=83)]),
@@ -242,7 +260,7 @@ async def test_named_place_returns_four_days_from_local_today():
     assert result["hourly_summary"]["max_pop_percent"] == 70 and result["hourly_summary"]["precipitation_hours"] == 3
     assert result["fetched_at"] == "2026-10-08T16:00:00+08:00"  # 北京时间
     assert result["limitations"] == [] and "requested_date" not in result
-    assert fake.paths() == ["lookup", "7d", "24h"]
+    assert fake.paths() == ["lookup", "15d", "168h"]
     assert fake.requests[0].url.params["lang"] == "zh"
     assert fake.requests[1].url.params["location"] == "101210101"
 
@@ -259,35 +277,42 @@ async def test_bad_days_and_hours_are_dropped():
 
 
 async def test_requested_date_in_window_returns_only_that_day():
-    # 逐小时从 10-08 16:00 起：今天 8 个小时，明天 16 个
+    # 逐小时从 10-08 16:00 起：今天还剩 8 个小时，之后 7 天内的哪天都是整天（11-04 Sean：问明天就画明天一整天）
     for requested, count, first, last in (
         ("2026-10-08", 8, "2026-10-08T16:00:00+08:00", "2026-10-08T23:00:00+08:00"),
-        ("2026-10-09", 16, "2026-10-09T00:00:00+08:00", "2026-10-09T15:00:00+08:00"),
+        ("2026-10-09", 24, "2026-10-09T00:00:00+08:00", "2026-10-09T23:00:00+08:00"),
+        ("2026-10-14", 24, "2026-10-14T00:00:00+08:00", "2026-10-14T23:00:00+08:00"),
     ):
         result = await forecaster(FakeQWeather()).forecast("杭州", date.fromisoformat(requested))
         assert result["requested_date"] == requested and result["day_count"] == 1
         assert [d["date"] for d in result["forecast_days"]] == [requested]
         assert len(result["hourly"]) == count and result["hourly_summary"]["window"] == f"{first} ~ {last}"
-        assert result["limitations"] == []
+        assert result["limitations"] == [] and "forecast_range" not in result
 
 
-async def test_requested_date_beyond_tomorrow_skips_hourly():
-    fake = FakeQWeather()
-    result = await forecaster(fake).forecast("杭州", date(2026, 10, 10))
-    assert [d["date"] for d in result["forecast_days"]] == ["2026-10-10"]
-    assert "hourly" not in result and "hourly_summary" not in result and result["limitations"] == []
-    assert fake.paths() == ["lookup", "7d"]  # 省一次和风调用
+async def test_requested_date_beyond_seven_days_skips_hourly():
+    for requested in (date(2026, 10, 15), date(2026, 10, 22)):  # 第 8 天、第 15 天（最后一天）
+        fake = FakeQWeather()
+        result = await forecaster(fake).forecast("杭州", requested)
+        assert [d["date"] for d in result["forecast_days"]] == [requested.isoformat()]
+        assert "hourly" not in result and "hourly_summary" not in result and result["limitations"] == []
+        assert fake.paths() == ["lookup", "15d"]  # 省一次和风调用
 
 
-async def test_requested_date_outside_window_keeps_whole_window():
-    for requested in (date(2026, 10, 20), date(2026, 10, 1)):
-        result = await forecaster(FakeQWeather()).forecast("杭州", requested)
-        assert result["day_count"] == 4 and result["requested_date"] == requested.isoformat()
+async def test_requested_date_outside_window_gives_no_days_only_the_range():
+    # 11-04 Sean：查不到的那天别拿别的日子凑。给了整段，模型照样会列出来
+    for requested in (date(2026, 10, 23), date(2026, 10, 7)):  # 第 16 天、昨天
+        fake = FakeQWeather()
+        result = await forecaster(fake).forecast("杭州", requested)
+        assert result["day_count"] == 0 and result["forecast_days"] == []
+        assert result["requested_date"] == requested.isoformat() and "hourly" not in result
+        assert result["forecast_range"] == {"first_date": "2026-10-08", "last_date": "2026-10-22"}
         assert result["limitations"] == ["requested_date_not_covered"]
+        assert fake.paths() == ["lookup", "15d"]
 
 
 async def test_hourly_failure_keeps_daily_forecast():
-    for fake in (FakeQWeather(fail={"24h": 500}), FakeQWeather(hourly=[])):
+    for fake in (FakeQWeather(fail={"168h": 500}), FakeQWeather(hourly=[])):
         result = await forecaster(fake).forecast("杭州")
         assert result["day_count"] == 4 and "hourly" not in result
         assert result["limitations"] == ["hourly_unavailable"]
@@ -305,7 +330,7 @@ async def test_local_today_follows_the_place_time_zone():
     # 北京时间 10-09 08:00，纽约还是 10-08 晚上；取不到逐小时也不能丢掉当地今天
     new_york = city("纽约", "纽约", "纽约州", country="美国", rank=10, tz="America/New_York")
     now = datetime(2026, 10, 9, 0, 0, tzinfo=UTC)
-    fake = FakeQWeather(cities=[new_york], fail={"24h": 500})
+    fake = FakeQWeather(cities=[new_york], fail={"168h": 500})
     result = await forecaster(fake, now=now).forecast("纽约")
     assert result["local_today"] == "2026-10-08" and result["forecast_days"][0]["date"] == "2026-10-08"
     assert result["fetched_at"] == "2026-10-09T08:00:00+08:00"
@@ -328,23 +353,22 @@ async def test_cache_crossing_midnight_drops_yesterday():
     second = await weather.forecast("杭州")
     assert first["forecast_days"][0]["date"] == "2026-10-08"
     assert second["local_today"] == "2026-10-09" and second["forecast_days"][0]["date"] == "2026-10-09"
-    assert fake.paths() == ["lookup", "7d", "24h"]  # 第二次全走缓存
+    assert fake.paths() == ["lookup", "15d", "168h", "lookup"]  # 第二次预报走缓存
     assert second["fetched_at"] == "2026-10-08T23:50:00+08:00"  # 取数时间是缓存里那份的
 
 
-async def test_forecast_and_city_are_cached():
+async def test_forecast_is_cached_but_cities_are_not():
+    # 和风不许缓存地理信息（常见问题“我能否缓存数据”），城市每次都查
     clock = [0.0]
     fake = FakeQWeather()
     weather = forecaster(fake, clock=lambda: clock[0])
     await weather.forecast("杭州")
     await weather.forecast("杭州", date(2026, 10, 9))
-    assert fake.paths() == ["lookup", "7d", "24h"]
+    await weather.forecast("杭州", date(2026, 10, 20))
+    assert fake.paths() == ["lookup", "15d", "168h", "lookup", "lookup"]
     clock[0] += FORECAST_CACHE_SECONDS
     await weather.forecast("杭州")
-    assert fake.paths()[3:] == ["7d", "24h"]  # 预报过期，城市还在缓存里
-    clock[0] += CITY_CACHE_SECONDS
-    await weather.forecast("杭州")
-    assert fake.paths()[5:] == ["lookup", "7d", "24h"]
+    assert fake.paths()[5:] == ["lookup", "15d", "168h"]
 
 
 async def test_lookup_uses_last_segment_and_english_names():
@@ -371,8 +395,8 @@ async def test_failures_carry_codes():
         (FakeQWeather(cities=[]), "location_not_found"),
         (FakeQWeather(fail={"lookup": 404}), "location_not_found"),  # 和风对认不出的地名回 404
         (FakeQWeather(fail={"lookup": 401}), "upstream_auth_failed"),
-        (FakeQWeather(fail={"7d": 429}), "upstream_rate_limited"),
-        (FakeQWeather(fail={"7d": 500}), "upstream_unavailable"),
+        (FakeQWeather(fail={"15d": 429}), "upstream_rate_limited"),
+        (FakeQWeather(fail={"15d": 500}), "upstream_unavailable"),
     ):
         with pytest.raises(ForecastError) as e:
             await forecaster(fake).forecast("杭州")
@@ -394,10 +418,17 @@ async def call(fake: FakeQWeather, **arguments):
 async def test_tool_gives_the_page_everything_and_the_model_no_hourly_detail():
     result = await call(FakeQWeather(), location="杭州", requested_date="2026-10-09")
     assert not result.is_error
-    assert result.structured_content["ok"] and len(result.structured_content["hourly"]) == 16
+    assert result.structured_content["ok"] and len(result.structured_content["hourly"]) == 24
     seen = json.loads(result.content[0].text)
     assert "hourly" not in seen and seen["hourly_summary"]["window"].startswith("2026-10-09T00:00")
     assert seen["forecast_days"][0]["date"] == "2026-10-09" and seen["requested_date"] == "2026-10-09"
+
+    # 不在范围里：模型只看到能查哪几天，没有别的日子
+    seen = json.loads((await call(FakeQWeather(), location="杭州", requested_date="2026-10-30")).content[0].text)
+    assert seen["forecast_days"] == [] and seen["forecast_range"] == {
+        "first_date": "2026-10-08",
+        "last_date": "2026-10-22",
+    }
 
 
 async def test_tool_failures_tell_the_model_what_to_do():
@@ -424,7 +455,7 @@ async def test_tool_failures_tell_the_model_what_to_do():
     assert "not coordinates" in result.content[0].text
 
     # 服务这边的问题：只说没有可用结果，不让模型把工具状态讲给用户（Fusion 9-19）
-    result = await call(FakeQWeather(fail={"7d": 500}), location="杭州")
+    result = await call(FakeQWeather(fail={"15d": 500}), location="杭州")
     assert result.structured_content["error"] == {
         "code": "upstream_unavailable",
         "message": "QWeather returned an error.",
@@ -490,3 +521,11 @@ async def test_mcp_is_served_next_to_rest_and_rest_is_unchanged():
             }
             called = rpc(await http.post("/mcp", json=body, headers=headers))
             assert called["result"]["structuredContent"]["error"]["code"] == "not_configured"
+
+
+async def test_client_only_asks_for_forecast_lengths_qweather_has():
+    client = QWeatherClient(credentials(), transport=FakeQWeather().transport())
+    with pytest.raises(ValueError):
+        await client.daily("101210101", days=14)
+    with pytest.raises(ValueError):
+        await client.hourly("101210101", hours=48)

@@ -15,11 +15,12 @@
 
 服务里做的：
 
-- 挑城市：和风城市查询是模糊匹配，只认名字出现在地名里的候选；同名的用地名里写到的省、市、国家区分；还分不出就返回候选，不按排名猜。照候选的写法（`江西省·南昌·西湖`）再查时只拿最后一段去查；纯英文地名用英文查。
-- 当地今天按城市时区（和风城市查询给的 `tz`）算；逐日从当地今天起取 4 天。
-- 问的那天在预报范围内只给那一天，逐小时也只留那天的小时；不在范围内保留整段，`limitations` 标 `requested_date_not_covered`。
-- 逐小时只在没指定日期、问今天或明天时取（和逐日同时取），取不到标 `hourly_unavailable`，不算失败。
-- 缓存在进程内，两个产品共用：预报按城市半小时，城市查询一天。整个调用 20 秒超时。
+- 挑城市：和风城市查询是模糊匹配，只认名字出现在地名里的候选；同名的用地名里写到的省、市、国家区分；还分不出时，和风排名（`rank`，越小越重要）比最前的落后超过 10 的去掉（“巴黎”是法国巴黎、“华盛顿”是华盛顿特区；“朝阳”“通州”照样问），剩下不止一个就返回候选。照候选的写法（`江西省·南昌·西湖`）再查时只拿最后一段去查；纯英文地名用英文查。
+- 当地今天按城市时区（和风城市查询给的 `tz`）算。逐日取 15 天（`/v7/weather/15d`）：没指定日期给从当地今天起 4 天；问的那天在 15 天里只给那一天；不在（更远或已经过去）一天都不给，只给 `forecast_range`（能查的头尾两天），`limitations` 标 `requested_date_not_covered`。给了别的日子模型会拿来凑（11-04）。
+- 逐小时取 168 小时（`/v7/weather/168h`，和逐日同时取）：没指定日期给接下来 24 小时；问今天起 7 天内的某天给那天的小时（今天只有还没过的，之后是整天）；更远不取。取不到标 `hourly_unavailable`，不算失败。
+- 预报缓存在进程内，两个产品共用，按城市半小时。城市查询不缓存：和风不许缓存地理信息。整个调用 20 秒超时。
+
+和风按请求次数计费，不论接口返回多少条（7 天和 15 天、24 小时和 168 小时一个价）。
 
 结果：`structuredContent` 是整份（给页面），文字是去掉逐小时明细的 JSON（给模型）。
 
@@ -36,7 +37,7 @@
  "fetched_at": "2026-10-08T16:00:00+08:00", "limitations": []}
 ```
 
-`limitations`：`requested_date_not_covered`、`fewer_days`（不到 4 天）、`hourly_unavailable`。`fetched_at` 是北京时间（模型把 UTC 时刻当本地时间念错过）。
+`limitations`：`requested_date_not_covered`、`fewer_days`（不到 4 天）、`hourly_unavailable`。问的那天不在范围里时多一个 `forecast_range`：`{"first_date", "last_date"}`，`forecast_days` 是空的。`fetched_at` 是北京时间（模型把 UTC 时刻当本地时间念错过）。
 
 失败：`structuredContent` 是 `{"ok": false, "error": {"code", "message", "retryable": false, "candidates"?}}`，`isError` 为 false（和 image 一样）。一律不可重试：同样的参数再查也不会好，该换别的来源。给模型的文字只有几种：
 
@@ -79,4 +80,4 @@ uv sync --frozen && uv run python -m app.main
 uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
 
-部署冒烟：`docker exec -i weather-service python - < scripts/smoke_weather.py`（REST 查一次“北京”和逐日预报；MCP 列工具、`get_weather` 查一次“北京”再带明天的日期查一次，第二次走缓存。共消耗五次和风请求）。
+部署冒烟：`docker exec -i weather-service python - < scripts/smoke_weather.py`（REST 查一次“北京”和逐日预报；MCP 列工具、`get_weather` 查一次“北京”再带明天的日期查一次，第二次预报走缓存。共消耗六次和风请求）。

@@ -23,8 +23,12 @@ TOKEN_REFRESH_MARGIN_SECONDS = 120
 TOKEN_IAT_SKEW_SECONDS = 30
 MAX_RESPONSE_BYTES = 256 * 1024
 CITY_LOOKUP_PATH = "/geo/v2/city/lookup"
-DAILY_FORECAST_PATH = "/v7/weather/7d"
-HOURLY_FORECAST_PATH = "/v7/weather/24h"
+# 逐日 / 逐小时预报按天数、小时数分几个接口，价格一样（一次请求算一次，不论多少条）。
+# REST 用 7 天、24 小时（Fusion 在用，不变）
+DAILY_FORECAST_PATH = "/v7/weather/{days}d"
+HOURLY_FORECAST_PATH = "/v7/weather/{hours}h"
+DAILY_CHOICES = (3, 7, 10, 15, 30)
+HOURLY_CHOICES = (24, 72, 168)
 
 
 class QWeatherError(Exception):
@@ -133,12 +137,16 @@ class QWeatherClient:
         )
         return _parse_all(payload.get("location"), _parse_city)
 
-    async def daily(self, location_id: str) -> list[Day]:
-        payload = await self._get(DAILY_FORECAST_PATH, {"location": location_id, "lang": "zh"})
+    async def daily(self, location_id: str, *, days: int = 7) -> list[Day]:
+        if days not in DAILY_CHOICES:
+            raise ValueError(f"QWeather has no {days}-day forecast")
+        payload = await self._get(DAILY_FORECAST_PATH.format(days=days), {"location": location_id, "lang": "zh"})
         return _parse_all(payload.get("daily"), _parse_day)
 
-    async def hourly(self, location_id: str) -> list[Hour]:
-        payload = await self._get(HOURLY_FORECAST_PATH, {"location": location_id, "lang": "zh"})
+    async def hourly(self, location_id: str, *, hours: int = 24) -> list[Hour]:
+        if hours not in HOURLY_CHOICES:
+            raise ValueError(f"QWeather has no {hours}-hour forecast")
+        payload = await self._get(HOURLY_FORECAST_PATH.format(hours=hours), {"location": location_id, "lang": "zh"})
         return _parse_all(payload.get("hourly"), _parse_hour)
 
     # 以下三个给 REST /v1/...（线上 Fusion 在用），返回的字段保持原样。
