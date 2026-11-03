@@ -4,11 +4,14 @@
 （踩过坑的版本），带上灵稿 app/tools/weather.py 后来的改进。和两边原来不一样的地方：
 - 当地今天按和风城市查询给的时区算。Fusion 是北京时间往前放一天，半夜跨天又赶上缓存会多留一个昨天；
   灵稿看逐小时的时区，取不到逐小时就退回北京时间，国外城市会丢掉当地今天。
-- 城市查询也缓存（一天）；预报缓存两个产品共用。
-- 问的日期不在预报里时，limitations 里明确标出 requested_date_not_covered，不用模型自己比日期。
+- 预报缓存两个产品共用。城市查询不缓存：和风不许缓存地理信息（常见问题“我能否缓存数据”）。
+- 逐日取 15 天：没问哪天给 4 天，问的那天在 15 天里只给那天，不在就一天都不给、只给能查的日期范围
+  （11-04 Sean：查不到的那天别拿别的日子凑；给了整段，模型照样会列出来）。
+- 逐小时取 168 小时：问 7 天内的某天给那天整天的（11-04 Sean：问明天就该画明天一整天，不是接下来 24 小时里的几个）。
 
 和风的城市查询是模糊匹配，随便写什么都会返回几个城市，所以挑城市（select_city）只认名字出现在地名里的候选；
-名字相同的用地名里写到的省、市、国家区分；还分不出就不按排名猜，把候选交给模型，它照候选的写法再查或者问用户。
+名字相同的用地名里写到的省、市、国家区分；还分不出时，和风排名（rank，越小越重要）比最前的落后超过 RANK_GAP 的去掉
+（11-04 Sean：“巴黎”就该是法国巴黎）；剩下不止一个就把候选交给模型，它照候选的写法再查或者问用户。
 """
 
 from __future__ import annotations
@@ -24,14 +27,18 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.qweather import City, Day, Hour, QWeatherClient, QWeatherError
 
-FORECAST_DAYS = 4
-HOURLY_POINTS = 24
+FORECAST_DAYS = 4  # 没问哪天时给几天
+DAILY_WINDOW_DAYS = 15  # 逐日取几天：问的那天在这里面才有
+HOURLY_HOURS = 168  # 逐小时取几个小时：从下一个整点起 7 天，7 天内的哪天都是整天
+HOURLY_POINTS = 24  # 没问哪天时给接下来几个小时
 MAX_CANDIDATES = 5
 MAX_LOCATION_LENGTH = 120
 # 国外地点 rank 大于这个不参与匹配：乱写的地名、同名小地方实测都在 83–85
 FOREIGN_MAX_RANK = 80
+# 同名分不出时，rank 比最前的大出这么多的不要。11-04 在 dev 上查的：一般说的那个和同名的差得多（巴黎 20/75、
+# 华盛顿 30/55、法兰克福 33/62、曼彻斯特 31/45、南山 25/45），两个都常说的差得少（朝阳 13/15、通州 23/25、普陀 25/35）
+RANK_GAP = 10
 FORECAST_CACHE_SECONDS = 30 * 60
-CITY_CACHE_SECONDS = 24 * 60 * 60
 CACHE_MAX_ENTRIES = 2048
 CALL_TIMEOUT_SECONDS = 20.0
 SEP = "·"
@@ -124,6 +131,10 @@ def select_city(query: str, cities: list[City]) -> City:
     matched = [city for city in matched if query.rfind(city.name) + len(city.name) == end]
     longest = max(len(city.name) for city in matched)
     unique = list({city.location_id: city for city in matched if len(city.name) == longest}.values())
+    ranks = [city.rank for city in unique]
+    if len(unique) > 1 and None not in ranks:  # 有没给排名的就不比
+        best = min(rank for rank in ranks if rank is not None)
+        unique = [city for city in unique if city.rank is not None and city.rank - best <= RANK_GAP]
     labels = list(dict.fromkeys(city_label(city) for city in unique))
     if len(labels) == 1:  # 写法完全一样的重复条目分不出、也不用分，取第一个
         return unique[0]
@@ -160,7 +171,7 @@ def _without_none(values: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_days(days: list[Day], today: date) -> list[dict[str, Any]]:
-    """从当地今天起最多 4 天；日期或气温不对的、重复的、早于今天的（跨天时缓存里的昨天）都不要。"""
+    """从当地今天起的每一天；日期或气温不对的、重复的、早于今天的（跨天时缓存里的昨天）都不要。"""
 
     out: list[dict[str, Any]] = []
     seen: set[date] = set()
@@ -189,17 +200,15 @@ def build_days(days: list[Day], today: date) -> list[dict[str, Any]]:
                 }
             )
         )
-        if len(out) == FORECAST_DAYS:
-            break
     return out
 
 
 def build_hourly(hours: list[Hour]) -> list[dict[str, Any]]:
-    """最多 24 个小时；时间要带当地时区、要往后走，气温要是数字。"""
+    """时间要带当地时区、要往后走，气温要是数字。"""
 
     out: list[dict[str, Any]] = []
     last: datetime | None = None
-    for hour in hours[:HOURLY_POINTS]:
+    for hour in hours:
         try:
             at = datetime.fromisoformat(hour.time)
         except ValueError:
@@ -251,9 +260,9 @@ def summarize_hourly(hourly: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def wants_hourly(requested: date | None, today: date) -> bool:
-    """逐小时只覆盖接下来 24 小时：没指定日期、问今天或明天时才取，省一次和风调用。"""
+    """逐小时覆盖接下来 7 天：没指定日期、问今天起 7 天内的某天才取，省一次和风调用。"""
 
-    return requested is None or 0 <= (requested - today).days <= 1
+    return requested is None or 0 <= (requested - today).days < HOURLY_HOURS // 24
 
 
 class _Cache:
@@ -272,7 +281,7 @@ class _Cache:
     def put(self, key: tuple[str, ...], fetched_at: datetime, value: Any) -> None:
         now = self._clock()
         if len(self._entries) >= CACHE_MAX_ENTRIES:
-            self._entries = {k: v for k, v in self._entries.items() if now - v[0] < CITY_CACHE_SECONDS}
+            self._entries = {k: v for k, v in self._entries.items() if now - v[0] < FORECAST_CACHE_SECONDS}
             if len(self._entries) >= CACHE_MAX_ENTRIES:
                 self._entries.clear()
         self._entries[key] = (now, fetched_at, value)
@@ -309,15 +318,14 @@ class Forecaster:
         # 纯英文地名用英文查（lang=zh 时返回中文名，“Paris”对不上“巴黎”）
         lookup = location.rsplit(SEP, 1)[-1].strip() or location
         lang = "en" if lookup.isascii() else "zh"
-        _, cities = await self._cached(
-            ("city", lang, lookup), CITY_CACHE_SECONDS, lambda: client.cities(lookup, lang=lang)
-        )
-        city = select_city(location, cities)
+        city = select_city(location, await client.cities(lookup, lang=lang))
         today = self._now().astimezone(place_zone(city)).date()
 
         def daily() -> Awaitable[tuple[datetime, list[Day]]]:
             return self._cached(
-                ("daily", city.location_id), FORECAST_CACHE_SECONDS, lambda: client.daily(city.location_id)
+                ("daily", city.location_id),
+                FORECAST_CACHE_SECONDS,
+                lambda: client.daily(city.location_id, days=DAILY_WINDOW_DAYS),
             )
 
         hourly_wanted = wants_hourly(requested, today)
@@ -325,31 +333,37 @@ class Forecaster:
             (fetched_at, days), hours = await asyncio.gather(daily(), self._hourly_or_empty(client, city.location_id))
         else:
             (fetched_at, days), hours = await daily(), []
-        forecast_days = build_days(days, today)
-        if not forecast_days:
+        window = build_days(days, today)
+        if not window:
             raise ForecastError("invalid_response")
 
         limitations: list[str] = []
         on = requested.isoformat() if requested else None
-        requested_day = next((day for day in forecast_days if day["date"] == on), None)
-        if requested and requested_day is None:
-            limitations.append("requested_date_not_covered")
-        if requested_day is not None:
-            # 问的那天在预报里：只给那一天，逐小时也只留那天（当地日期）的小时，摘要随之只覆盖这些小时
-            forecast_days = [requested_day]
-        elif len(forecast_days) < FORECAST_DAYS:
-            limitations.append("fewer_days")
+        requested_day = next((day for day in window if day["date"] == on), None)
         points = build_hourly(hours)
         if hourly_wanted and not points:
             limitations.append("hourly_unavailable")
-        if requested_day is not None:
+        if requested is None:
+            forecast_days = window[:FORECAST_DAYS]
+            if len(forecast_days) < FORECAST_DAYS:
+                limitations.append("fewer_days")
+            points = points[:HOURLY_POINTS]
+        elif requested_day is not None:
+            # 问的那天在预报里：只给那一天，逐小时也只留那天（当地日期）的小时，摘要随之只覆盖这些小时
+            forecast_days = [requested_day]
             points = [point for point in points if point["time"][:10] == on]
+        else:
+            # 不在预报里：一天都不给，只说能查哪几天（给了别的日子，模型会拿来凑）
+            forecast_days, points = [], []
+            limitations.append("requested_date_not_covered")
 
         result: dict[str, Any] = {"ok": True, "resolved_location": city_label(city), "local_today": today.isoformat()}
         if on:
             result["requested_date"] = on
         result["day_count"] = len(forecast_days)
         result["forecast_days"] = forecast_days
+        if requested_day is None and requested is not None:
+            result["forecast_range"] = {"first_date": window[0]["date"], "last_date": window[-1]["date"]}
         if points:
             result["hourly"] = points
             result["hourly_summary"] = summarize_hourly(points)
@@ -363,7 +377,7 @@ class Forecaster:
 
         try:
             _, hours = await self._cached(
-                ("hourly", location_id), FORECAST_CACHE_SECONDS, lambda: client.hourly(location_id)
+                ("hourly", location_id), FORECAST_CACHE_SECONDS, lambda: client.hourly(location_id, hours=HOURLY_HOURS)
             )
         except QWeatherError:
             return []

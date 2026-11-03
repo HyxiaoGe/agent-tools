@@ -21,13 +21,23 @@ from fastmcp.tools import ToolResult
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from app.forecast import FORECAST_DAYS, MAX_LOCATION_LENGTH, Forecaster, ForecastError, parse_arguments
+from app.forecast import (
+    DAILY_WINDOW_DAYS,
+    FORECAST_DAYS,
+    HOURLY_HOURS,
+    MAX_LOCATION_LENGTH,
+    Forecaster,
+    ForecastError,
+    parse_arguments,
+)
+
+HOURLY_DAYS = HOURLY_HOURS // 24
 
 logger = logging.getLogger("weather")
 
 TOOL_NAME = "get_weather"
 
-DESCRIPTION = f"""Get the weather forecast (QWeather) for a named place: a daily forecast for up to {FORECAST_DAYS} days starting from the place's local today, and a summary of the coming hours when the request covers today, tomorrow, or no specific date.
+DESCRIPTION = f"""Get the weather forecast (QWeather) for a named place: a daily forecast for {FORECAST_DAYS} days starting from the place's local today, or for one requested date within the {DAILY_WINDOW_DAYS} days starting today; and a summary of the hours when no date is requested or the requested date is within the {HOURLY_DAYS} days starting today.
 
 Places: forecasts are available for cities and districts or counties, not for whole provinces, scenic spots, streets, or buildings. For a place inside a city (e.g. West Lake), pass the complete place text as the user wrote it and do not add a city the user did not provide. When the user asks about a whole province or region (e.g. Hunan), query its capital or main city instead (e.g. Changsha) and say in the answer which city it represents. Call only for a place the user affirmatively wants checked, never for a negated, excluded, or explicitly unwanted place.
 
@@ -36,15 +46,16 @@ Dates: when the user asks about one specific day, pass it as requested_date. Res
 The result is JSON:
 - resolved_location: the administrative area the forecast covers; do not describe it as weather for a specific building or street.
 - local_today: the current date at the place.
-- forecast_days: date, weekday, day_weather and night_weather, high_c and low_c in °C, and day and night wind direction and wind power. When requested_date falls within the forecast window, only that day is returned; otherwise the whole window is returned.
-- hourly_summary, when present: covers only its window within the next 24 hours, limited to the requested date's hours when one day is returned. It has window; temp_min_c and temp_max_c; max_pop_percent and max_pop_time, the peak precipitation probability and its time; precipitation_hours, the number of hours with precipitation; first_precipitation_time and last_precipitation_time; and total_precip_mm. The last three are omitted when no precipitation is forecast. Its times carry the place's local UTC offset; state them as local clock times.
-- limitations: requested_date_not_covered means the requested date is not in forecast_days; fewer_days means fewer than {FORECAST_DAYS} days were available; hourly_unavailable means the hourly data could not be fetched.
+- forecast_days: date, weekday, day_weather and night_weather, high_c and low_c in °C, and day and night wind direction and wind power. When requested_date falls within the forecast window, only that day is returned; otherwise no days are returned.
+- forecast_range, only when requested_date is not covered: first_date and last_date, the dates a forecast is available for.
+- hourly_summary, when present: covers the next 24 hours when no date is requested, or the requested date's hours (for today, only the hours still to come). It has window; temp_min_c and temp_max_c; max_pop_percent and max_pop_time, the peak precipitation probability and its time; precipitation_hours, the number of hours with precipitation; first_precipitation_time and last_precipitation_time; and total_precip_mm. The last three are omitted when no precipitation is forecast. Its times carry the place's local UTC offset; state them as local clock times.
+- limitations: requested_date_not_covered means the requested date is outside the forecast window; fewer_days means fewer than {FORECAST_DAYS} days were available; hourly_unavailable means the hourly data could not be fetched.
 - fetched_at: when the forecast was fetched, in China Standard Time.
 
 Using the result:
 - Refer only to dates, conditions, temperatures, wind, and hourly_summary values actually returned.
 - The daily forecast gives only daytime and nighttime conditions; a question about a specific time of day can be answered more precisely only from hourly_summary within its window, otherwise say the daily granularity cannot confirm it. A condition such as "cloudy" does not prove that rain, thunder, snow, or strong wind is absent; absence must come from returned fields.
-- If the requested date is not covered and no authoritative source gives that exact date's forecast, state only that its weather is unavailable and give the returned forecast range. Do not add other days' weather or historical climate statistics.
+- If the requested date is not covered and no authoritative source gives that exact date's forecast, state only that its weather is unavailable and give forecast_range. Do not add other days' weather or historical climate statistics.
 - Do not add current temperature, humidity, air quality, alerts, flooding, congestion, or delays. Mention precipitation probability or amount only as returned in hourly_summary.
 - Practical advice such as carrying an umbrella or whether conditions suit an activity should follow from the returned forecast.
 - When the user asks about one date and one condition, answer briefly without recapping adjacent days or unrelated metrics.

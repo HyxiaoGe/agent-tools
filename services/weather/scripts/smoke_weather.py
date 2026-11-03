@@ -1,7 +1,7 @@
 """部署冒烟：在 weather-service 容器内用真实凭证查一次，确认凭证有效、能连通和风，REST 和 MCP 都能用。
 
 REST 查“北京”和它的逐日预报（两次和风请求）；MCP 列工具，get_weather 查“北京”（城市、逐日、逐小时三次），
-再带明天的日期查一次（全走缓存，不再请求和风）。共消耗五次和风请求。
+再带明天的日期查一次（城市再查一次，预报走缓存）。共消耗六次和风请求。
 
 用法：docker exec -i weather-service python - < scripts/smoke_weather.py
 """
@@ -75,7 +75,12 @@ def main():
         sys.exit(f"unexpected forecast: {json.dumps(weather, ensure_ascii=False)[:300]}")
     tomorrow = (date.fromisoformat(beijing_today) + timedelta(days=1)).isoformat()
     dated = get_weather(location="北京", requested_date=tomorrow)
-    if [day["date"] for day in dated["forecast_days"]] != [tomorrow] or dated["fetched_at"] != weather["fetched_at"]:
+    full_day = len(dated.get("hourly") or []) == 24  # 明天是整天的逐小时
+    if (
+        [day["date"] for day in dated["forecast_days"]] != [tomorrow]
+        or dated["fetched_at"] != weather["fetched_at"]
+        or not full_day
+    ):
         sys.exit(f"unexpected dated forecast: {json.dumps(dated, ensure_ascii=False)[:300]}")
     print(f"mcp ok: {weather['resolved_location']}, today {beijing_today}, {weather['limitations']}")
 
