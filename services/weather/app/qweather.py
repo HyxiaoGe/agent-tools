@@ -76,6 +76,9 @@ class City:
     adm2: str
     country: str
     rank: int | None
+    # 当地时区（IANA 名，如 Europe/Paris）和当前 UTC 偏移，get_weather 用来算当地今天；不进 REST /v1/cities 的返回。
+    tz: str = ""
+    utc_offset: str = ""
 
 
 @dataclass(frozen=True)
@@ -122,21 +125,31 @@ class QWeatherClient:
             await self._http.aclose()
             self._http = None
 
-    async def lookup_city(self, location: str, *, number: int = 10, lang: str = "zh") -> list[dict[str, Any]]:
+    async def cities(self, location: str, *, number: int = 10, lang: str = "zh") -> list[City]:
         payload = await self._get(
             CITY_LOOKUP_PATH,
             {"location": location, "number": str(number), "lang": lang},
             not_found_is_empty=True,
         )
-        return [asdict(city) for city in _parse_all(payload.get("location"), _parse_city)]
+        return _parse_all(payload.get("location"), _parse_city)
+
+    async def daily(self, location_id: str) -> list[Day]:
+        payload = await self._get(DAILY_FORECAST_PATH, {"location": location_id, "lang": "zh"})
+        return _parse_all(payload.get("daily"), _parse_day)
+
+    async def hourly(self, location_id: str) -> list[Hour]:
+        payload = await self._get(HOURLY_FORECAST_PATH, {"location": location_id, "lang": "zh"})
+        return _parse_all(payload.get("hourly"), _parse_hour)
+
+    # 以下三个给 REST /v1/...（线上 Fusion 在用），返回的字段保持原样。
+    async def lookup_city(self, location: str, *, number: int = 10, lang: str = "zh") -> list[dict[str, Any]]:
+        return [_public_city(city) for city in await self.cities(location, number=number, lang=lang)]
 
     async def daily_forecast(self, location_id: str) -> list[dict[str, Any]]:
-        payload = await self._get(DAILY_FORECAST_PATH, {"location": location_id, "lang": "zh"})
-        return [asdict(day) for day in _parse_all(payload.get("daily"), _parse_day)]
+        return [asdict(day) for day in await self.daily(location_id)]
 
     async def hourly_forecast(self, location_id: str) -> list[dict[str, Any]]:
-        payload = await self._get(HOURLY_FORECAST_PATH, {"location": location_id, "lang": "zh"})
-        return [asdict(hour) for hour in _parse_all(payload.get("hourly"), _parse_hour)]
+        return [asdict(hour) for hour in await self.hourly(location_id)]
 
     async def _get(self, path: str, params: dict[str, str], *, not_found_is_empty: bool = False) -> dict[str, Any]:
         token = self._bearer_token()
@@ -261,7 +274,13 @@ def _parse_city(raw: Any) -> City | None:
         adm2=_text(raw, "adm2", 80) or "",
         country=_text(raw, "country", 80) or "",
         rank=int(rank_text) if rank_text and rank_text.isdigit() else None,
+        tz=_text(raw, "tz", 64) or "",
+        utc_offset=_text(raw, "utcOffset", 8) or "",
     )
+
+
+def _public_city(city: City) -> dict[str, Any]:
+    return {key: value for key, value in asdict(city).items() if key not in ("tz", "utc_offset")}
 
 
 def _parse_day(raw: Any) -> Day | None:

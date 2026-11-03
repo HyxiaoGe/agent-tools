@@ -9,6 +9,7 @@ dependencies = [
     "httpx>=0.28.0",
     "cryptography>=43.0.0",
     "pydantic-settings>=2.6.0",
+    "fastmcp>=4.1,<5",
 ]
 
 [dependency-groups]
@@ -23,6 +24,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# 给模型看的说明按段落写成长行，不折行
+"app/mcp_server.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
