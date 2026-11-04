@@ -273,10 +273,14 @@ jobs:
         with:
           python-version: "3.11"
           # 不用 Actions 缓存：self-hosted 机器本地已有 pip 缓存
+      # 每次装进新的 venv：setup-python 的解释器在 self-hosted 机器上是共用的，原地升级会留下上一版的包。
+      # fastmcp 3 → 4 时代码挪进了 fastmcp-slim，原地升级卸旧版把新装的文件删了（import 不到 FastMCP）。
       - name: Install test dependencies
-        run: python -m pip install -r requirements.txt
+        run: |
+          python -m venv --clear .venv
+          .venv/bin/python -m pip install -r requirements.txt
       - name: Run unit tests
-        run: python -m unittest -v test_main test_mcp
+        run: .venv/bin/python -m unittest -v test_main test_mcp
 
   publish:
     needs: [changes, check-gateway, check-image, check-search, check-reader, check-amap, check-context7, check-weather, check-flyai, check-tmap]
