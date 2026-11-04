@@ -529,6 +529,8 @@ test("供应商 envelope 必须成功且 itemList 类型正确，真实空列表
         departure_date: "2026-08-02",
       });
       assert.equal(response.status, 502);
+      // 已经调过 FlyAI：不带“没调上游”的声明，网关照常计数
+      assert.equal(response.headers.get("x-upstream-calls"), null);
       assert.deepEqual(await response.json(), { error_code: errorCode });
     } finally {
       await close(server);
@@ -571,6 +573,7 @@ test("闭合 schema 拒绝未知字段、选项注入与非法时间", async () 
     ]) {
       const response = await post(baseUrl, "/v1/search/flights", body);
       assert.equal(response.status, 400);
+      assert.equal(response.headers.get("x-upstream-calls"), "0");
       assert.deepEqual(await response.json(), { error_code: "invalid_request" });
     }
     assert.equal(calls.length, 0);
@@ -600,6 +603,7 @@ test("同用户并发为 1，全局并发为 2", async () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     const sameUser = await post(baseUrl, "/v1/search/flights", body, { userScope: "same-user" });
     assert.equal(sameUser.status, 429);
+    assert.equal(sameUser.headers.get("x-upstream-calls"), "0");
     assert.deepEqual(await sameUser.json(), { error_code: "concurrency_limited" });
 
     const second = post(baseUrl, "/v1/search/flights", body, { userScope: "user-2" });

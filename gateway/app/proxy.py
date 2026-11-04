@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 
 import anyio
 import httpx
@@ -46,6 +47,20 @@ def counts_as_call(service: str, path: str, tool: str | None) -> bool:
     if service == "image" and path.lstrip("/").startswith("v1/images/"):
         return False
     return bool(tool) or not is_mcp_path(path)
+
+
+# 服务回这个响应头、值为 0，表示这次请求在服务里就被拒了（参数不合法、服务自己的并发满了等），没有调用上游。
+# 网关据此不把它算进每日上限，记账 outcome=rejected。不能按状态码推断：reader 调完付费上游也会回 404。
+# 只在网关这一层用，不转给调用方。
+NO_UPSTREAM_CALL_HEADER = "x-upstream-calls"
+
+# 不占每日上限的结果：被上限拦下（limited）、网关连接池满没转出去（busy）、服务声明没调上游（rejected）。
+_NOT_COUNTED_OUTCOMES = frozenset({"limited", "busy", "rejected"})
+
+
+def consumes_quota(outcome: str) -> bool:
+    """这次调用是否占每日上限；实时计数和重启后从用量记录补回用同一口径。"""
+    return outcome not in _NOT_COUNTED_OUTCOMES
 
 
 def mcp_tool_name(path: str, body: bytes) -> str | None:
@@ -106,7 +121,7 @@ def downstream_response_headers(service: str, upstream: Upstream, headers: httpx
     result: dict[str, str] = {}
     for name, value in headers.multi_items():
         lowered = name.lower()
-        if lowered in _HOP_BY_HOP:
+        if lowered in _HOP_BY_HOP or lowered == NO_UPSTREAM_CALL_HEADER:
             continue
         if lowered == "location":
             value = _rewrite_location(service, upstream, value)
@@ -184,11 +199,15 @@ async def forward(
     body: bytes,
     usage: UsageStore,
     tool: str | None = None,
+    on_settled: Callable[[str], None] | None = None,
 ) -> Response:
-    """caller 为 None 只用于公开资源（生图结果图片），不带身份头、不记账。"""
+    """caller 为 None 只用于公开资源（生图结果图片），不带身份头、不记账。
+    on_settled 在记账时拿到最终的 outcome，用来把不占每日上限的调用退回去。"""
     started = time.monotonic()
 
     async def finish(status: int, outcome: str) -> None:
+        if on_settled is not None:
+            on_settled(outcome)
         if caller is None:
             return
         await record_usage(
@@ -224,7 +243,8 @@ async def forward(
         return _error(502, "upstream_unreachable", f"{service} is unreachable.")
 
     async def body_stream():
-        outcome = "ok"
+        # 服务声明没调上游时记为 rejected；中途读失败仍按 timeout / unreachable 记。
+        outcome = "rejected" if upstream_response.headers.get(NO_UPSTREAM_CALL_HEADER) == "0" else "ok"
         try:
             async for chunk in upstream_response.aiter_raw():
                 yield chunk

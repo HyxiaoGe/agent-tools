@@ -4,6 +4,7 @@ import asyncio
 import logging
 import sqlite3
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import httpx
 import pytest
@@ -17,6 +18,7 @@ from app.usage import UsageRecord, UsageStore
 pytestmark = pytest.mark.anyio
 
 FUSION_KEY = "fusion-test-key"
+LINGDRAFT_KEY = "lingdraft-test-key"
 SERVICES = ("image", "search", "reader", "trends", "amap", "context7", "weather", "flyai", "tmap", "maps")
 INITIALIZE = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
 TOOL_CALL = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_latest_news"}}
@@ -30,28 +32,50 @@ def anyio_backend():
 @pytest.fixture(autouse=True)
 def product_keys(monkeypatch):
     monkeypatch.setenv("FUSION_SERVICE_KEY", FUSION_KEY)
+    monkeypatch.setenv("LINGDRAFT_SERVICE_KEY", LINGDRAFT_KEY)
 
 
-def make_settings(tmp_path, limits: str, **extra) -> Settings:
+def make_settings(
+    tmp_path, limits: str, *, product_limits: dict[str, dict[str, int]] | None = None, **extra
+) -> Settings:
+    """product_limits 给了就再加一个 lingdraft 产品，按产品写 daily_limits。"""
+    product_limits = product_limits or {}
+    products = {
+        "fusion": ProductConfig(
+            service_key_env="FUSION_SERVICE_KEY", services=list(SERVICES), daily_limits=product_limits.get("fusion", {})
+        )
+    }
+    if product_limits:
+        products["lingdraft"] = ProductConfig(
+            service_key_env="LINGDRAFT_SERVICE_KEY",
+            services=list(SERVICES),
+            daily_limits=product_limits.get("lingdraft", {}),
+        )
     return Settings(
         _env_file=None,
-        products={"fusion": ProductConfig(service_key_env="FUSION_SERVICE_KEY", services=list(SERVICES))},
+        products=products,
         usage_db_path=str(tmp_path / "usage.sqlite3"),
         service_daily_limits=limits,
         **extra,
     )
 
 
-class App:
-    """起一个带 mock 上游的网关，记录每个上游实际收到的请求数。"""
+def _ok() -> httpx.Response:
+    return httpx.Response(200, stream=httpx.ByteStream(b"{}"), headers={"content-type": "application/json"})
 
-    def __init__(self, settings: Settings):
+
+class App:
+    """起一个带 mock 上游的网关，记录每个上游实际收到的请求数；responses 按顺序给出上游的回应。"""
+
+    def __init__(self, settings: Settings, responses: list | None = None):
         self.received: dict[str, int] = {name: 0 for name in SERVICES}
+        pending = list(responses or [])
 
         def transport(service: str) -> httpx.MockTransport:
             def handle(_request: httpx.Request) -> httpx.Response:
                 self.received[service] += 1
-                return httpx.Response(200, stream=httpx.ByteStream(b"{}"), headers={"content-type": "application/json"})
+                reply = pending.pop(0) if pending else _ok
+                return reply()
 
             return httpx.MockTransport(handle)
 
@@ -68,8 +92,8 @@ class App:
         await self._lifespan.__aexit__(*exc)
 
 
-def auth() -> dict[str, str]:
-    return {"Authorization": f"Bearer {FUSION_KEY}"}
+def auth(key: str = FUSION_KEY) -> dict[str, str]:
+    return {"Authorization": f"Bearer {key}"}
 
 
 def usage_rows(settings: Settings) -> list[dict]:
@@ -80,11 +104,13 @@ def usage_rows(settings: Settings) -> list[dict]:
     return rows
 
 
-def _record(store: UsageStore, ts: str, service: str, *, outcome: str = "ok", status: int = 200) -> None:
+def _record(
+    store: UsageStore, ts: str, service: str, *, outcome: str = "ok", status: int = 200, app_id: str = "fusion"
+) -> None:
     store.record_sync(
         UsageRecord(
             ts=ts,
-            app_id="fusion",
+            app_id=app_id,
             user_id=None,
             scene=None,
             request_id=None,
@@ -184,10 +210,10 @@ async def test_limit_resets_at_beijing_midnight(tmp_path):
     before_midnight = datetime(2026, 11, 1, 15, 59, 59, tzinfo=UTC)  # 北京 11-01 23:59:59
     after_midnight = datetime(2026, 11, 1, 16, 0, 0, tzinfo=UTC)  # 北京 11-02 00:00
 
-    assert (await limiter.admit("search", before_midnight)).allowed
-    denied = await limiter.admit("search", before_midnight)
+    assert (await limiter.admit("search", "fusion", before_midnight)).allowed
+    denied = await limiter.admit("search", "fusion", before_midnight)
     assert not denied.allowed and denied.retry_after == 1
-    assert (await limiter.admit("search", after_midnight)).allowed
+    assert (await limiter.admit("search", "fusion", after_midnight)).allowed
 
 
 def test_seconds_until_reset_uses_beijing_midnight():
@@ -204,7 +230,7 @@ async def test_alerts_once_at_ratio_and_once_when_exhausted(tmp_path):
     limiter = DailyLimiter({"search": 5}, str(tmp_path / "none.sqlite3"), 0.8, alert)
     results = []
     for _ in range(8):
-        results.append((await limiter.admit("search")).allowed)
+        results.append((await limiter.admit("search", "fusion")).allowed)
         await asyncio.sleep(0)
 
     assert results == [True] * 5 + [False] * 3
@@ -228,9 +254,9 @@ async def test_thresholds_crossed_before_restart_are_not_alerted_again(tmp_path)
         sent.append(text)
 
     limiter = DailyLimiter({"search": 5, "image": 1}, db, 0.8, alert)
-    assert (await limiter.admit("search")).allowed  # 第 5 次：预警重启前已越过
-    assert not (await limiter.admit("search")).allowed  # 用满：重启前已拦过
-    assert not (await limiter.admit("image")).allowed  # image 用满但还没拦过：要告警
+    assert (await limiter.admit("search", "fusion")).allowed  # 第 5 次：预警重启前已越过
+    assert not (await limiter.admit("search", "fusion")).allowed  # 用满：重启前已拦过
+    assert not (await limiter.admit("image", "fusion")).allowed  # image 用满但还没拦过：要告警
     await asyncio.sleep(0)
 
     assert sent == [
@@ -244,7 +270,7 @@ async def test_unreadable_usage_db_fails_open(tmp_path, caplog):
     # 用目录冒充数据库文件：只读打开会失败
     limiter = DailyLimiter({"search": 1}, str(tmp_path), 0.8)
 
-    assert (await limiter.admit("search")).allowed
+    assert (await limiter.admit("search", "fusion")).allowed
     assert "daily_limit_load_failed" in caplog.text
 
 
@@ -309,3 +335,119 @@ def test_default_limits_cover_paid_services_only():
     assert set(limits) <= set(SERVICES)
     # 免费服务不设上限
     assert "trends" not in limits and "context7" not in limits
+
+
+def _rejected_by_service() -> httpx.Response:
+    return httpx.Response(
+        400,
+        stream=httpx.ByteStream(b'{"error_code":"invalid_request"}'),
+        headers={"content-type": "application/json", "x-upstream-calls": "0"},
+    )
+
+
+def _page_not_found() -> httpx.Response:
+    # reader 调完付费上游、原网页不存在时回 404，没有声明头：照样算一次
+    return httpx.Response(404, stream=httpx.ByteStream(b"{}"), headers={"content-type": "application/json"})
+
+
+def _pool_full() -> httpx.Response:
+    raise httpx.PoolTimeout("pool full")
+
+
+def test_product_daily_limits_are_validated():
+    settings = make_settings(Path("/tmp"), "flyai=100", product_limits={"fusion": {"flyai": 50}, "lingdraft": {}})
+    assert settings.product_daily_limits() == {"fusion": {"flyai": 50}}
+    with pytest.raises(ValueError, match="cannot call"):
+        Settings(
+            _env_file=None,
+            products={"fusion": ProductConfig(service_key_env="FUSION_SERVICE_KEY", daily_limits={"flyai": 5})},
+        )
+    with pytest.raises(ValueError):
+        ProductConfig(service_key_env="FUSION_SERVICE_KEY", services=["flyai"], daily_limits={"flyai": -1})
+
+
+async def test_product_limit_caps_one_product_without_blocking_others(tmp_path):
+    settings = make_settings(tmp_path, "flyai=3", product_limits={"fusion": {"flyai": 1}})
+    gateway = App(settings)
+    flights = "/flyai/v1/search/flights"
+    async with gateway as http:
+        fusion = [await http.post(flights, headers=auth(), json={}) for _ in range(2)]
+        lingdraft = [await http.post(flights, headers=auth(LINGDRAFT_KEY), json={}) for _ in range(3)]
+
+    assert [r.status_code for r in fusion] == [200, 429]
+    assert "this product's daily call limit" in fusion[1].json()["message"]
+    # 总上限 3：fusion 用了 1，lingdraft 只剩 2
+    assert [r.status_code for r in lingdraft] == [200, 200, 429]
+    assert "reached its daily call limit" in lingdraft[2].json()["message"]
+    assert gateway.received["flyai"] == 3
+
+
+async def test_service_declared_no_upstream_call_is_not_counted(tmp_path):
+    settings = make_settings(tmp_path, "flyai=1")
+    gateway = App(settings, [_rejected_by_service, _rejected_by_service])
+    async with gateway as http:
+        responses = [await http.post("/flyai/v1/search/trains", headers=auth(), json={}) for _ in range(4)]
+
+    assert [r.status_code for r in responses] == [400, 400, 200, 429]
+    assert "x-upstream-calls" not in responses[0].headers  # 内部信号，不转给调用方
+    assert [r["outcome"] for r in usage_rows(settings)] == ["rejected", "rejected", "ok", "limited"]
+
+
+async def test_failures_without_the_declaration_still_count(tmp_path):
+    gateway = App(make_settings(tmp_path, "reader=1"), [_page_not_found])
+    async with gateway as http:
+        statuses = [(await http.post("/reader/read", headers=auth(), json={})).status_code for _ in range(2)]
+    assert statuses == [404, 429]
+
+
+async def test_requests_that_never_left_the_gateway_are_not_counted(tmp_path):
+    gateway = App(make_settings(tmp_path, "flyai=1"), [_pool_full])
+    async with gateway as http:
+        flights = "/flyai/v1/search/flights"
+        statuses = [(await http.post(flights, headers=auth(), json={})).status_code for _ in range(3)]
+    assert statuses == [503, 200, 429]
+
+
+async def test_restart_restores_per_product_counts_without_rejected_calls(tmp_path):
+    db = str(tmp_path / "usage.sqlite3")
+    store = UsageStore(db, retention_days=3650)
+    now = datetime.now(UTC).isoformat()
+    _record(store, now, "flyai")
+    for outcome in ("rejected", "rejected", "busy", "ok"):
+        _record(store, now, "flyai", outcome=outcome, app_id="lingdraft")
+    store.close()
+
+    limiter = DailyLimiter({"flyai": 4}, db, 0.8, product_limits={"fusion": {"flyai": 1}, "lingdraft": {"flyai": 2}})
+    assert not (await limiter.admit("flyai", "fusion")).allowed  # fusion 已用 1
+    assert (await limiter.admit("flyai", "lingdraft")).allowed  # lingdraft 只算 1 次 ok
+    denied = await limiter.admit("flyai", "lingdraft")
+    assert (denied.allowed, denied.scope, denied.used) == (False, "product", 2)
+
+
+async def test_release_only_returns_the_same_days_count(tmp_path):
+    limiter = DailyLimiter({"flyai": 1}, str(tmp_path / "none.sqlite3"), 0.8)
+    before_midnight = datetime(2026, 11, 1, 15, 59, 59, tzinfo=UTC)
+    after_midnight = datetime(2026, 11, 1, 16, 0, 0, tzinfo=UTC)
+
+    yesterday = await limiter.admit("flyai", "fusion", before_midnight)
+    assert (await limiter.admit("flyai", "fusion", after_midnight)).allowed
+    limiter.release("flyai", "fusion", yesterday)  # 前一天的那次不能退到今天
+    assert not (await limiter.admit("flyai", "fusion", after_midnight)).allowed
+
+
+async def test_product_limit_alerts_name_the_product(tmp_path):
+    sent: list[str] = []
+
+    async def alert(text: str) -> None:
+        sent.append(text)
+
+    limiter = DailyLimiter({}, str(tmp_path / "none.sqlite3"), 0.5, alert, product_limits={"lingdraft": {"flyai": 2}})
+    results = [(await limiter.admit("flyai", "lingdraft")).allowed for _ in range(3)]
+    assert (await limiter.admit("flyai", "fusion")).allowed  # 别的产品不受影响
+    await asyncio.sleep(0)
+
+    assert results == [True, True, False]
+    assert len(sent) == 2
+    assert "lingdraft 今日已调用 flyai 1 次" in sent[0]
+    assert "lingdraft 今日调用 flyai 已达该产品的每日上限 2 次" in sent[1]
+    assert "PRODUCTS.lingdraft.daily_limits" in sent[1]

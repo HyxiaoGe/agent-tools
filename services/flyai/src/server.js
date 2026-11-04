@@ -23,6 +23,15 @@ const ERROR_STATUS = Object.freeze({
   internal_error: 500,
 });
 
+// 这些错误在启动 CLI 之前就返回，没有调用 FlyAI：带上 x-upstream-calls: 0，网关据此不计入每日上限。
+const REJECTED_BEFORE_PROVIDER = new Set([
+  "not_found",
+  "method_not_allowed",
+  "invalid_request",
+  "concurrency_limited",
+  "credential_unavailable",
+]);
+
 class ConcurrencyGate {
   constructor(globalLimit = 2) {
     this.globalLimit = globalLimit;
@@ -54,7 +63,7 @@ function resolveUserScope(headers) {
   return createHash("sha256").update(`${app}\n${user}`).digest("hex");
 }
 
-function sendJson(response, statusCode, payload) {
+function sendJson(response, statusCode, payload, extraHeaders = {}) {
   if (response.destroyed || response.writableEnded) return;
   const body = JSON.stringify(payload);
   response.writeHead(statusCode, {
@@ -62,13 +71,15 @@ function sendJson(response, statusCode, payload) {
     "content-length": Buffer.byteLength(body),
     "content-type": "application/json; charset=utf-8",
     "x-content-type-options": "nosniff",
+    ...extraHeaders,
   });
   response.end(body);
 }
 
 function sendError(response, code) {
   const safeCode = code in ERROR_STATUS ? code : "internal_error";
-  sendJson(response, ERROR_STATUS[safeCode], { error_code: safeCode });
+  const headers = REJECTED_BEFORE_PROVIDER.has(safeCode) ? { "x-upstream-calls": "0" } : {};
+  sendJson(response, ERROR_STATUS[safeCode], { error_code: safeCode }, headers);
 }
 
 async function readRequestBody(request) {

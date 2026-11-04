@@ -17,7 +17,7 @@ from app.config import Settings, Upstream
 from app.daily_report import run_daily_report_loop
 from app.feishu import send_feishu_text
 from app.limits import DailyLimiter
-from app.proxy import counts_as_call, forward, mcp_tool_name, record_usage
+from app.proxy import consumes_quota, counts_as_call, forward, mcp_tool_name, record_usage
 from app.usage import UsageStore
 
 _LOG_FIELDS = ("service", "app_id", "path", "tool", "status", "outcome", "duration_ms", "request_id")
@@ -108,7 +108,11 @@ def create_app(
             else None
         )
         app.state.limiter = DailyLimiter(
-            settings.daily_limits(), settings.usage_db_path, settings.limit_alert_ratio, alert
+            settings.daily_limits(),
+            settings.usage_db_path,
+            settings.limit_alert_ratio,
+            alert,
+            product_limits=settings.product_daily_limits(),
         )
         # 配了日报 webhook 才起定时任务；单 worker 部署，哪天已发记在状态文件里，重启不重发。
         report_task = None
@@ -158,8 +162,10 @@ def create_app(
                     {"error": "payload_too_large", "message": "Request body too large."}, status_code=413
                 )
         tool = mcp_tool_name(path, bytes(body))
+        on_settled = None
         if caller is not None and counts_as_call(service, path, tool):
-            decision = await request.app.state.limiter.admit(service)
+            limiter = request.app.state.limiter
+            decision = await limiter.admit(service, caller.app_id)
             if not decision.allowed:
                 await record_usage(
                     request.app.state.usage,
@@ -172,14 +178,21 @@ def create_app(
                     outcome="limited",
                     duration_ms=0,
                 )
+                whose = "this product's" if decision.scope == "product" else "its"
                 return JSONResponse(
                     {
                         "error": "daily_limit_exceeded",
-                        "message": f"{service} reached its daily call limit; it resets at 00:00 Asia/Shanghai.",
+                        "message": f"{service} reached {whose} daily call limit; it resets at 00:00 Asia/Shanghai.",
                     },
                     status_code=429,
                     headers={"Retry-After": str(decision.retry_after)},
                 )
+
+            def on_settled(outcome: str) -> None:
+                # 连接池满没转出去、服务声明没调上游的，退回刚占的这一次
+                if not consumes_quota(outcome):
+                    limiter.release(service, caller.app_id, decision)
+
         return await forward(
             request,
             service=service,
@@ -190,6 +203,7 @@ def create_app(
             body=bytes(body),
             tool=tool,
             usage=request.app.state.usage,
+            on_settled=on_settled,
         )
 
     return app

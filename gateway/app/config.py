@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Annotated
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -40,6 +41,9 @@ class ProductConfig(BaseModel):
     service_key_env: str = Field(pattern=r"^[A-Z][A-Z0-9_]{0,127}$")
     # 该产品允许调用的服务；省略时为 DEFAULT_PRODUCT_SERVICES。
     services: list[str] | None = None
+    # 该产品对某些服务的每日上限（北京时间自然日），和 SERVICE_DAILY_LIMITS 的服务总上限同时生效：
+    # 几个产品共用一份付费额度时，防止一个产品把全天的额度用光。没写的服务只受总上限。
+    daily_limits: dict[str, Annotated[int, Field(ge=0)]] = Field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -144,10 +148,19 @@ class Settings(BaseSettings):
             unknown = set(product.services or ()) - known
             if unknown:
                 raise ValueError(f"PRODUCTS[{app_id}].services references unknown services: {sorted(unknown)}")
+            # 给没放行的服务写上限多半是写错了服务名或产品，起不来比静默无效好查。
+            not_allowed = set(product.daily_limits) - self.allowed_services(app_id)
+            if not_allowed:
+                raise ValueError(
+                    f"PRODUCTS[{app_id}].daily_limits references services it cannot call: {sorted(not_allowed)}"
+                )
         return self
 
     def daily_limits(self) -> dict[str, int]:
         return parse_daily_limits(self.service_daily_limits)
+
+    def product_daily_limits(self) -> dict[str, dict[str, int]]:
+        return {app_id: dict(p.daily_limits) for app_id, p in self.products.items() if p.daily_limits}
 
     def allowed_services(self, app_id: str) -> frozenset[str]:
         product = self.products[app_id]
