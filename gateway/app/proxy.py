@@ -39,8 +39,12 @@ def is_mcp_path(path: str) -> bool:
     return path.rstrip("/").rsplit("/", 1)[-1] == "mcp"
 
 
-def counts_as_call(path: str, tool: str | None) -> bool:
-    """日报和每日上限只算真正的调用：REST 请求和 MCP tools/call；MCP 握手（initialize、tools/list、SSE）不算。"""
+def counts_as_call(service: str, path: str, tool: str | None) -> bool:
+    """日报和每日上限只算真正的调用：REST 请求和 MCP tools/call。不算的：MCP 握手（initialize、tools/list、SSE），
+    以及产品按 id 取、删 image-service 存着的图（/image/v1/images/...，产品页面每看一次图就取一次，不是生图）。
+    path 有没有开头的 / 都行（转发时没有，用量记录里有）。"""
+    if service == "image" and path.lstrip("/").startswith("v1/images/"):
+        return False
     return bool(tool) or not is_mcp_path(path)
 
 

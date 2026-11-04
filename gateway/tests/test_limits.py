@@ -140,6 +140,25 @@ async def test_mcp_handshakes_are_neither_counted_nor_blocked(tmp_path):
     assert handshake_after_limit.status_code == 200
 
 
+async def test_fetching_and_deleting_stored_images_is_neither_counted_nor_blocked(tmp_path):
+    gateway = App(make_settings(tmp_path, "image=1"))
+    image = "/image/v1/images/3f0e8a4c-0000-4000-8000-000000000000"
+    generate_call = {**TOOL_CALL, "params": {"name": "generate_image"}}
+    async with gateway as http:
+        fetches = [(await http.get(image, headers=auth())).status_code for _ in range(3)]
+        generate = await http.post("/image/v2/mcp", headers=auth(), json=generate_call)
+        over = await http.post("/image/v2/mcp", headers=auth(), json=generate_call)
+        delete = await http.delete(image, headers=auth())
+        unauthenticated = await http.get(image)
+
+    assert fetches == [200, 200, 200] and delete.status_code == 200
+    assert (generate.status_code, over.status_code) == (200, 429)
+    assert unauthenticated.status_code == 401  # 不是公开地址，照旧要密钥
+    assert gateway.received["image"] == 5
+    stats = daily_report.collect_day_stats(str(tmp_path / "usage.sqlite3"), datetime.now(daily_report.BEIJING).date())
+    assert stats.services["image"].calls == 1
+
+
 async def test_services_without_a_limit_are_not_capped(tmp_path):
     gateway = App(make_settings(tmp_path, "search=1"))
     async with gateway as http:

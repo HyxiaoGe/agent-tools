@@ -157,7 +157,7 @@ def create_app(
                     {"error": "payload_too_large", "message": "Request body too large."}, status_code=413
                 )
         tool = mcp_tool_name(path, bytes(body))
-        if caller is not None and counts_as_call(path, tool):
+        if caller is not None and counts_as_call(service, path, tool):
             decision = await request.app.state.limiter.admit(service)
             if not decision.allowed:
                 await record_usage(
