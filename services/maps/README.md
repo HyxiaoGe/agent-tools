@@ -6,7 +6,7 @@
 
 ## 为什么直接调 REST
 
-- 高德 MCP 搜索不给评分、参考消费、营业时间、图片，Fusion 只好逐条再查详情；REST 一次搜索就全有（`show_fields=business,photos`），10 条结果省 10 次请求。
+- 高德 MCP 搜索不给评分、人均消费、营业时间、图片，Fusion 只好逐条再查详情；REST 一次搜索就全有（`show_fields=business,photos`），10 条结果省 10 次请求。
 - 腾讯 MCP 回给人看的中文段落，各工具写法不一样；REST 是 JSON。
 - 两家都是 GCJ-02，同一次调用里可以混用（高德解析的起点 + 腾讯算的路线）。
 
@@ -19,7 +19,7 @@
 - 额度用尽后记住这一家的这组接口，到恢复时间前不再请求，但最多跳 1 小时（腾讯在控制台调配额后会恢复）。高德额度按月，下月 1 日恢复；腾讯按天，次日零点恢复。重启就忘。
 - 每家同时最多 3 个请求；每次上游请求 8 秒，不重试；整次工具调用 25 秒，路线到时已算出的照样返回。
 
-腾讯比高德少的：没有评分、参考消费、营业时间、图片、跳转链接；搜索不支持“或”，只搜第一个词（`limitations` 标 `first_term_only`）。
+腾讯比高德少的：没有评分、人均消费、营业时间、图片、跳转链接；搜索不支持“或”，只搜第一个词（`limitations` 标 `first_term_only`）。
 
 ## place_search
 
@@ -39,7 +39,7 @@
              "rating": 4.3, "reference_cost_yuan": 40, "open_hours": "...", "business_area": "北京路",
              "photo_url": "https://store.is.autonavi.com/...", "map_url": "https://uri.amap.com/marker?poiid=B00155QFWB&src=lingdraft&callnative=0",
              "provider": "amap"}],
- "limitations": ["reference_cost_not_per_person"], "providers": ["amap"]}
+ "limitations": [], "providers": ["amap"]}
 ```
 
 - `place_id` 带服务商前缀，模型拿它去 `route_compare` 定起终点。

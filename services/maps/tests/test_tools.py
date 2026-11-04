@@ -78,7 +78,7 @@ class TestPlaceSearch:
         assert first["place_id"] == "amap_B0FFKKRXAZ" and first["provider"] == "amap"
         assert first["map_url"] == "https://uri.amap.com/marker?poiid=B0FFKKRXAZ&src=lingdraft&callnative=0"
         assert first["reference_cost_yuan"] == 120 and "location" not in first
-        assert result["limitations"] == ["reference_cost_not_per_person"]
+        assert result["limitations"] == []
         assert "anchor" not in result and fake.paths("tmap") == []
 
     async def test_quota_moves_to_tmap_and_is_remembered(self):
