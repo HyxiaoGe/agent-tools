@@ -2,12 +2,16 @@
 reader-service — 网页内容读取微服务
 先直接抓取 HTML 提取正文；直接抓取失败或迟迟没有结果时，同时请求 Tavily Extract、
 Firecrawl 与 Jina Reader，谁先读到用谁，整个请求受同一个总时限约束。
+
+REST /read 是线上 Fusion 在用的，保持原样；给产品模型用的 MCP 工具 read_page 在 /mcp（见 mcp_server），
+两者读取都走 read_page()。
 """
 
 import asyncio
 import logging
 import os
 import time
+from contextlib import asynccontextmanager
 from datetime import date
 from typing import Annotated
 from urllib.parse import urlparse
@@ -19,11 +23,21 @@ from pydantic import BaseModel
 
 import quota
 from direct_read import read_direct
+from mcp_server import build_mcp
 
-app = FastAPI(title="Reader Service")
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # 无状态的 MCP 也要先起它的会话管理器（mcp_app 在文件末尾建好）
+    async with mcp_app.lifespan(app):
+        yield
+
+
+app = FastAPI(title="Reader Service", lifespan=_lifespan)
 logger = logging.getLogger("reader_service")
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
+# MCP 的 INFO 日志逐个请求记录；这个服务的日志只记域名，不记网址
+for _name in ("httpx", "httpcore", "mcp.server.streamable_http", "mcp.server.streamable_http_manager", "fastmcp"):
+    logging.getLogger(_name).setLevel(logging.WARNING)
 
 JINA_BASE_URL = "https://r.jina.ai"
 # 号池：逗号分隔的多个 key，轮询使用；兼容单 key 的 JINA_API_KEY。余额按账号算，多个 key 必须来自不同账号。
@@ -423,9 +437,18 @@ def _log_failure(domain: str, status_code: int, detail: dict) -> None:
     )
 
 
-def _raise_reader_error(*, status_code: int, domain: str, detail: dict) -> None:
+class ReadFailed(HTTPException):
+    """一次读取没读到。detail 是 REST 照旧返回的结构。page_status 是 Firecrawl 看到的原网页错误状态码
+    （404/410 以外的），REST 不用；全部失败时 REST 只报 Jina 的原因，MCP 用它报更准的。"""
+
+    def __init__(self, status_code: int, detail: dict, page_status: int | None = None) -> None:
+        super().__init__(status_code=status_code, detail=detail)
+        self.page_status = page_status
+
+
+def _raise_reader_error(*, status_code: int, domain: str, detail: dict, page_status: int | None = None) -> None:
     _log_failure(domain, status_code, detail)
-    raise HTTPException(status_code=status_code, detail=detail) from None
+    raise ReadFailed(status_code, detail, page_status) from None
 
 
 @app.get("/health")
@@ -605,7 +628,13 @@ async def read_url(
         raise HTTPException(status_code=422, detail="URL 格式无效") from None
     if parsed.scheme not in ("http", "https") or not parsed.netloc or not hostname:
         raise HTTPException(status_code=422, detail="URL 格式无效")
+    return await read_page(url, full)
 
+
+async def read_page(url: str, full: bool = False) -> ReadResponse:
+    """读一次网页（REST /read 和 MCP read_page 共用）。调用方已校验过网址；没读到抛 ReadFailed。"""
+    parsed = urlparse(url)
+    hostname = parsed.hostname
     start = _monotonic()
     deadline = start + READ_TOTAL_TIMEOUT
     domain = hostname
@@ -641,6 +670,7 @@ async def read_url(
     provider_attempts = 0
     jina = _JinaOutcome()
     page_gone: int | None = None
+    firecrawl_page_status: int | None = None
     pending = {direct_task} if direct_task is not None else set()
     try:
         if direct_task is not None:
@@ -684,6 +714,8 @@ async def read_url(
                 if isinstance(scraped, PageError) and scraped.gone:
                     page_gone = scraped.status
                     break
+                if isinstance(scraped, PageError):
+                    firecrawl_page_status = scraped.status
                 jina_task = asyncio.create_task(_read_with_jina(url, deadline, jina))
                 pending.add(jina_task)
             if jina_task is not None and jina_task in done:
@@ -721,7 +753,14 @@ async def read_url(
         attempts=jina.attempts + provider_attempts,
         started_at=start,
     )
-    _raise_reader_error(status_code=jina.error_status, domain=domain, detail=detail)
+    _raise_reader_error(
+        status_code=jina.error_status, domain=domain, detail=detail, page_status=firecrawl_page_status
+    )
+
+
+# 放在最后：上面的路由先匹配，其余（/mcp）交给 MCP
+mcp_app = build_mcp(read_page).http_app(path="/mcp", stateless_http=True)
+app.mount("/", mcp_app)
 
 
 if __name__ == "__main__":
