@@ -15,6 +15,7 @@ flowchart LR
         W["weather<br/>和风天气代理"]
         F["flyai<br/>FlyAI 出行适配器"]
         M["tmap<br/>腾讯地图 MCP 代理"]
+        MP["maps<br/>地图组合层"]
     end
     G --> S
     G --> R
@@ -24,9 +25,11 @@ flowchart LR
     G --> W
     G --> F
     G --> M
+    G --> MP
     I --> IP["Seedream / Gemini"]
     S --> SP["Brave / Tavily / Firecrawl / DeepSeek"]
     R --> RP["直连 / Firecrawl / Tavily / Jina"]
+    MP --> MPP["高德 → 腾讯 Web 服务"]
 ```
 
 | 服务 | 做什么 | 接口 |
@@ -41,12 +44,13 @@ flowchart LR
 | [weather](services/weather/README.md) | 天气：MCP 工具 `get_weather`（挑城市、按当地日期整理逐日和逐小时预报、缓存，Fusion 和灵稿共用）；原来的城市查询与预报 REST 接口保留（和风天气，服务端持有凭证签 JWT） | MCP + REST |
 | [flyai](services/flyai/README.md) | 航班 / 高铁查询：FlyAI 第三方 CLI 的隔离适配器，服务端持有 API Key，只开放两个查询接口并投影安全字段 | REST |
 | [tmap](services/tmap/README.md) | 腾讯地图：地点搜索、逆地址解析、路线与距离矩阵（官方 MCP 的代理，服务端持有密钥、只放行只读工具） | MCP |
+| [maps](services/maps/README.md) | 地图组合层：MCP 工具 `place_search`、`route_compare`（地名解析、重名、当前位置、整理结果，Fusion 和灵稿共用）；直接调高德、腾讯的 Web 服务，每次上游请求先高德，额度用尽或出错时转腾讯 | MCP |
 
 ## 设计要点
 
 ### 身份只来自密钥，下游不各自鉴权
 
-网关按 `Authorization` 里的产品密钥认定调用方，再按产品配置放行服务（付费服务要逐个产品写明才可调用），丢弃调用方自带的身份头再重写转发，下游收到的产品、用户、场景都可信。search / reader / trends / amap / context7 / weather / flyai / tmap 自身不做鉴权，只接入专用内网，外部和其他容器都只能经网关访问；路径里含 `.` / `..` 段一律拒绝，防止借公开前缀绕过鉴权。每个请求记一行用量（产品、用户、场景、请求 ID、MCP 工具名、耗时），可以按产品、场景和工具统计调用量。
+网关按 `Authorization` 里的产品密钥认定调用方，再按产品配置放行服务（付费服务要逐个产品写明才可调用），丢弃调用方自带的身份头再重写转发，下游收到的产品、用户、场景都可信。search / reader / trends / amap / context7 / weather / flyai / tmap / maps 自身不做鉴权，只接入专用内网，外部和其他容器都只能经网关访问；路径里含 `.` / `..` 段一律拒绝，防止借公开前缀绕过鉴权。每个请求记一行用量（产品、用户、场景、请求 ID、MCP 工具名、耗时），可以按产品、场景和工具统计调用量。
 
 ### 慢服务不拖垮其他服务
 

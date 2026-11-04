@@ -53,6 +53,7 @@ _HEALTH_PATHS = {
     "weather": "health",
     "flyai": "health",
     "tmap": "health",
+    "maps": "health",
 }
 logger = logging.getLogger("gateway")
 

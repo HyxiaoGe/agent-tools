@@ -50,6 +50,15 @@ READER_SUMMARY = {
         {"provider": "jina", "limit": 300, "used": 0, "rejected": 1},
     ],
 }
+MAPS_SUMMARY = {
+    "day": "2026-10-31",
+    "available": True,
+    "providers": [
+        {"provider": "amap", "requests": 5, "failed": 0, "quota": 1, "skipped": 2},
+        {"provider": "tmap", "requests": 3, "failed": 1, "quota": 0, "skipped": 0},
+    ],
+    "fallbacks": 3,
+}
 
 
 @pytest.fixture
@@ -138,12 +147,15 @@ def _service_client(name: str, summary: dict, handler=None) -> httpx.AsyncClient
     return client
 
 
-def _clients(search: httpx.AsyncClient | None = None, *, image=None, reader=None) -> dict[str, httpx.AsyncClient]:
-    """日报用的各服务 client；image / reader 传 handler 可改返回，默认返回上面的计数。"""
+def _clients(
+    search: httpx.AsyncClient | None = None, *, image=None, reader=None, maps=None
+) -> dict[str, httpx.AsyncClient]:
+    """日报用的各服务 client；image / reader / maps 传 handler 可改返回，默认返回上面的计数。"""
     return {
         "search": search or _search_client(),
         "image": _service_client("image", IMAGE_SUMMARY, image),
         "reader": _service_client("reader", READER_SUMMARY, reader),
+        "maps": _service_client("maps", MAPS_SUMMARY, maps),
     }
 
 
@@ -209,6 +221,8 @@ async def test_build_report_combines_gateway_counts_with_search_upstreams(settin
     assert (image_request.url.path, image_request.url.params["day"]) == ("/v1/quota", "2026-10-31")
     [reader_request] = clients["reader"].requests
     assert (reader_request.url.path, reader_request.url.params["day"]) == ("/usage/daily", "2026-10-31")
+    [maps_request] = clients["maps"].requests
+    assert (maps_request.url.path, maps_request.url.params["day"]) == ("/usage/daily", "2026-10-31")
     assert text == "\n".join(
         [
             "【agent-tools 日报】10-31（北京时间）",
@@ -229,6 +243,7 @@ async def test_build_report_combines_gateway_counts_with_search_upstreams(settin
             "Firecrawl 剩余 69,797 credits（计费周期至 11-23）",
             "image 上游（调用 / 每日上限）：volcano 2 / 100 · alibaba 1（不限额）",
             "reader 上游（调用 / 每日上限）：firecrawl 1 / 300 · jina 0 / 300（拦下 1 次）",
+            "maps 上游（请求 / 失败）：amap 5 / 0（额度用尽 1 次，因用尽跳过 2 次） · tmap 3 / 1 · 转腾讯 3 次",
         ]
     )
     for c in clients.values():
@@ -265,18 +280,23 @@ async def test_build_report_degrades_per_service_when_quota_summaries_fail(setti
     def boom(_request):
         raise httpx.ConnectError("image down")
 
-    clients = _clients(image=boom, reader=lambda _r: httpx.Response(200, json={**READER_SUMMARY, "available": False}))
+    clients = _clients(
+        image=boom,
+        reader=lambda _r: httpx.Response(200, json={**READER_SUMMARY, "available": False}),
+        maps=lambda _r: httpx.Response(502, text="down"),
+    )
     text = await daily_report.build_report(settings, clients, DAY)
 
-    assert text.splitlines()[-2:] == ["image 上游：获取失败", "reader 上游：计数不可用"]
+    assert text.splitlines()[-3:] == ["image 上游：获取失败", "reader 上游：计数不可用", "maps 上游：获取失败"]
     assert "daily_report_upstream_summary_failed: image ConnectError" in caplog.text
     # search 照常
     assert "· deepseek（主） 312 / 1000" in text
 
     missing = {"search": _search_client()}
-    assert (await daily_report.build_report(settings, missing, DAY)).splitlines()[-2:] == [
+    assert (await daily_report.build_report(settings, missing, DAY)).splitlines()[-3:] == [
         "image 上游：获取失败",
         "reader 上游：获取失败",
+        "maps 上游：获取失败",
     ]
 
 
@@ -287,9 +307,11 @@ async def test_quota_lines_explain_missing_counts_and_skip_idle_services(setting
         **READER_SUMMARY,
         "providers": [{**p, "used": 0, "rejected": 0} for p in READER_SUMMARY["providers"]],
     }
+    idle_maps = {**MAPS_SUMMARY, "providers": [], "fallbacks": 0}
     clients = _clients(
         image=lambda _r: httpx.Response(200, json=idle_image),
         reader=lambda _r: httpx.Response(200, json=idle_reader),
+        maps=lambda _r: httpx.Response(200, json=idle_maps),
     )
 
     text = await daily_report.build_report(settings, clients, DAY)
@@ -298,9 +320,16 @@ async def test_quota_lines_explain_missing_counts_and_skip_idle_services(setting
         "reader 上游：没有调用上游（全部直接抓取，或计数已过 3 天保留期）",
     ]
 
-    # 前一天 image / reader 都没被调用：没有上游计数就不出这两行
+    # 前一天 image / reader / maps 都没被调用：没有上游计数就不出这几行
     quiet = await daily_report.build_report(settings, clients, date(2026, 10, 30))
-    assert "image 上游" not in quiet and "reader 上游" not in quiet
+    assert "image 上游" not in quiet and "reader 上游" not in quiet and "maps 上游" not in quiet
+
+    # 网关转了 maps 的调用，maps 却一次也没请求上游
+    store = UsageStore(settings.usage_db_path, retention_days=3650)
+    _record(store, "2026-10-31T07:00:00+00:00", "maps", "/mcp", tool="place_search", app_id="lingdraft")
+    store.close()
+    text = await daily_report.build_report(settings, clients, DAY)
+    assert text.splitlines()[-1] == "maps 上游：没有请求上游（参数不对、没有当前位置，或计数已过 3 天保留期）"
 
 
 def test_due_report_day_waits_until_configured_beijing_hour():

@@ -18,6 +18,7 @@ agent-tools 的统一入口。调用方只配一个地址和一把产品密钥�
 | `/weather/...` | weather-service（和风天气的只读代理，`/weather/v1/cities`、`/weather/v1/forecast/daily`、`/weather/v1/forecast/hourly`；按项目计费，产品要在 `services` 里写明） |
 | `/flyai/...` | flyai-adapter（FlyAI 航班 / 高铁查询适配器，`POST /flyai/v1/search/flights`、`/flyai/v1/search/trains`；付费服务，产品要在 `services` 里写明） |
 | `/tmap/...` | tmap-mcp（腾讯地图官方 MCP 的代理，`/tmap/mcp`；按 key 计每日配额，产品要在 `services` 里写明） |
+| `/maps/...` | maps-service（地图组合层，`/maps/mcp`：地点搜索、路线对比两个工具，先高德后腾讯；付费服务，产品要在 `services` 里写明） |
 
 `GET /health` 不需要密钥。生图结果图片 `GET|HEAD /image/static/...` 本身就是公开地址，也不需要密钥、不记账。路径里含 `.` / `..` 段一律 400，防止借公开前缀绕过鉴权。
 
@@ -48,7 +49,7 @@ agent-tools 的统一入口。调用方只配一个地址和一把产品密钥�
 
 最外层的兜底：防止批量实验或失控循环把付费上游打穿。`SERVICE_DAILY_LIMITS`（`服务=次数`，逗号分隔，北京时间自然日）控制各服务每天最多转发多少次调用，超出直接返回 429，不转发，记账为 `outcome=limited`。
 
-- 默认 `search=2000,reader=1000,image=200,weather=1000,amap=1000,tmap=1000,flyai=100`，约为 10-23 ~ 11-01 单日峰值的 5~25 倍；未列出的服务（免费的 trends、context7）不限，`0` 表示当天一律拒绝。写了不存在的服务名，网关起不来。
+- 默认 `search=2000,reader=1000,image=200,weather=1000,amap=1000,tmap=1000,maps=300,flyai=100`，约为 10-23 ~ 11-01 单日峰值的 5~25 倍（maps 是 11-04 新加的，暂定 300）；未列出的服务（免费的 trends、context7）不限，`0` 表示当天一律拒绝。写了不存在的服务名，网关起不来。
 - 只算真正的调用：REST 请求和 MCP `tools/call`。MCP 握手（`initialize`、`tools/list`、SSE）不算也不拦，会话可以照常建立。产品按 id 取、删 image-service 存着的图（`GET` / `DELETE /image/v1/images/{id}`）也不算不拦：页面每看一次图就取一次，不是生图；日报里也不计入。
 - 所有产品共用一个计数。计数在内存里，每天第一次用到时从用量记录补回当天已有的调用数，重启不清零；被拦下的请求不计入。
 - 用到 `LIMIT_ALERT_RATIO`（默认 0.8）和用满时各推一次飞书巡检群（`LIMIT_ALERT_WEBHOOK` / `LIMIT_ALERT_SIGN_SECRET`，留空只写日志），每个服务每天各一次。

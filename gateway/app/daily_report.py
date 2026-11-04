@@ -38,8 +38,14 @@ _CHECK_INTERVAL_SECONDS = 300
 _MAX_ATTEMPTS_PER_DAY = 3
 _STATE_KEEP_DAYS = 10
 _ROLE_LABELS = {"primary": "（主）", "fallback": "（备用）"}
-# 各服务按上游计数的接口；字段统一为 day / available / providers[provider, limit, used, rejected]
-UPSTREAM_SUMMARY_PATHS = {"search": "/usage/daily", "image": "/v1/quota", "reader": "/usage/daily"}
+# 各服务按上游计数的接口；image / reader 的字段统一为 day / available / providers[provider, limit, used, rejected]，
+# maps 没有每日上限（额度在高德、腾讯那边），字段是 providers[provider, requests, failed, quota, skipped] 和 fallbacks。
+UPSTREAM_SUMMARY_PATHS = {
+    "search": "/usage/daily",
+    "image": "/v1/quota",
+    "reader": "/usage/daily",
+    "maps": "/usage/daily",
+}
 # 有请求却没有任何上游计数时的常见原因（手动查 3 天前的日期时计数已过期）
 _NO_UPSTREAM_REASONS = {"image": "全部命中缓存", "reader": "全部直接抓取"}
 
@@ -178,6 +184,29 @@ def _quota_lines(service: str, summary: dict | None, gateway_calls: int) -> list
     return []
 
 
+def _maps_lines(summary: dict | None, gateway_calls: int) -> list[str]:
+    """maps 的上游用量，一行：每家 请求 / 失败，额度用尽、记着用尽没发的另附；再加转腾讯几次。没用量也没调用时不出。"""
+    if summary is None:
+        return ["maps 上游：获取失败"]
+    if not summary.get("available", False):
+        return ["maps 上游：计数不可用"]
+    active = [p for p in summary.get("providers", []) if p.get("requests") or p.get("skipped")]
+    if active:
+        parts = []
+        for p in active:
+            part = f"{p['provider']} {p.get('requests', 0):,} / {p.get('failed', 0):,}"
+            extra = []
+            if p.get("quota"):
+                extra.append(f"额度用尽 {p['quota']:,} 次")
+            if p.get("skipped"):
+                extra.append(f"因用尽跳过 {p['skipped']:,} 次")
+            parts.append(part + (f"（{'，'.join(extra)}）" if extra else ""))
+        return [f"maps 上游（请求 / 失败）：{' · '.join(parts)} · 转腾讯 {summary.get('fallbacks', 0):,} 次"]
+    if gateway_calls:
+        return ["maps 上游：没有请求上游（参数不对、没有当前位置，或计数已过 3 天保留期）"]
+    return []
+
+
 def _limit_note(svc: ServiceStats, limit: int | None) -> str:
     # 只在用量过半或有拦截时提示上限，平时不占篇幅
     if limit is None or not (svc.limited or svc.calls >= limit / 2):
@@ -193,7 +222,7 @@ def render_report(
     limits: Mapping[str, int] | None = None,
     upstream_summaries: Mapping[str, dict | None] | None = None,
 ) -> str:
-    """upstream_summaries：image / reader 的上游计数（键缺失表示没拉取，不出这一段）。"""
+    """upstream_summaries：image / reader / maps 的上游计数（键缺失表示没拉取，不出这一段）。"""
     limits = limits or {}
     upstream_summaries = upstream_summaries or {}
     lines = [f"【agent-tools 日报】{stats.day.strftime('%m-%d')}（北京时间）"]
@@ -219,6 +248,8 @@ def render_report(
     for service in ("image", "reader"):
         if service in upstream_summaries:
             lines.extend(_quota_lines(service, upstream_summaries[service], calls(service)))
+    if "maps" in upstream_summaries:
+        lines.extend(_maps_lines(upstream_summaries["maps"], calls("maps")))
     return "\n".join(lines)
 
 

@@ -70,6 +70,8 @@ class Settings(BaseSettings):
     flyai_upstream: str = "http://flyai-adapter:8093"
     # 腾讯地图官方 MCP 的代理（注入密钥、只读白名单），按 key 计每日配额，不在产品默认放行列表里。
     tmap_upstream: str = "http://tmap-mcp:3336"
+    # 地图组合层：直接调高德、腾讯的 Web 服务，先高德后腾讯，给产品两个 MCP 工具；付费服务，不在产品默认放行列表里。
+    maps_upstream: str = "http://maps-service:8094"
 
     # 超时要大于调用方自己的超时，由调用方决定放弃；image-service 内部总预算 135s。
     image_timeout_seconds: float = 180
@@ -84,6 +86,8 @@ class Settings(BaseSettings):
     # FlyAI 适配器自身给供应商 CLI 20 秒，再留排队与传输余量。
     flyai_timeout_seconds: float = 30
     tmap_timeout_seconds: float = 60
+    # 服务自身一次工具调用最多 25 秒，再留余量。
+    maps_timeout_seconds: float = 40
 
     # 按服务分开的连接池：某个服务堆积慢请求时只占满自己的池，不拖住其他服务。
     image_max_connections: int = 16
@@ -95,6 +99,7 @@ class Settings(BaseSettings):
     weather_max_connections: int = 16
     flyai_max_connections: int = 8
     tmap_max_connections: int = 16
+    maps_max_connections: int = 16
     # 池满时排队等待的上限，超过即返回 503。
     pool_wait_seconds: float = 5
 
@@ -106,7 +111,7 @@ class Settings(BaseSettings):
     # 按服务的每日调用上限（北京时间自然日）：兜底防批量实验或失控循环打穿付费上游，超出返回 429。
     # 只算 REST 请求和 MCP tools/call，不算握手；未列出的服务（免费的 trends、context7）不限。
     # 默认值约为 10-23 ~ 11-01 单日峰值的 5~25 倍；服务内部另有按上游的额度。
-    service_daily_limits: str = "search=2000,reader=1000,image=200,weather=1000,amap=1000,tmap=1000,flyai=100"
+    service_daily_limits: str = "search=2000,reader=1000,image=200,weather=1000,amap=1000,tmap=1000,maps=300,flyai=100"
     # 用到上限的这个比例时先推一次预警，用满时再推一次；每个服务每天各一次。
     limit_alert_ratio: float = Field(default=0.8, gt=0, lt=1)
     # 飞书巡检群自定义机器人；留空则只写日志。
@@ -162,4 +167,5 @@ class Settings(BaseSettings):
             "weather": Upstream("weather", s.weather_upstream, s.weather_timeout_seconds, s.weather_max_connections),
             "flyai": Upstream("flyai", s.flyai_upstream, s.flyai_timeout_seconds, s.flyai_max_connections),
             "tmap": Upstream("tmap", s.tmap_upstream, s.tmap_timeout_seconds, s.tmap_max_connections),
+            "maps": Upstream("maps", s.maps_upstream, s.maps_timeout_seconds, s.maps_max_connections),
         }

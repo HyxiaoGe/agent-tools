@@ -1,0 +1,28 @@
+name: maps
+services:
+  maps-service:
+    build: .
+    # dev 部署时由 deploy-from-acr.sh 传入本次提交的镜像（agent-tools/<服务>:<短 SHA>）；未传时用当前已部署的版本，本地开发会按 build 构建。
+    image: ${AGENT_TOOLS_IMAGE:-agent-tools/maps:current}
+    container_name: maps-service
+    env_file: .env
+    environment:
+      - TZ=Asia/Shanghai
+      - PORT=8094
+      # 每天各家的请求、失败、额度用尽次数，重启后接着算（见 app/upstream.py）
+      - USAGE_STATE_PATH=/app/storage/usage.json
+    volumes:
+      - ./storage:/app/storage
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    restart: unless-stopped
+    # 自身无鉴权，只在专用网络里，经网关 /maps/... 访问；要访问公网的高德、腾讯，网络不能是 internal。
+    networks:
+      - agent-tools
+
+networks:
+  agent-tools:
+    external: true
+    name: agent-tools-internal
