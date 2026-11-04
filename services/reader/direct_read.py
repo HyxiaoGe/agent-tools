@@ -21,6 +21,8 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 import trafilatura
 
+import code_blocks
+
 logger = logging.getLogger("reader_service")
 
 DIRECT_READ_ENABLED = os.getenv("DIRECT_READ_ENABLED", "1") != "0"
@@ -135,13 +137,26 @@ async def _fetch_html(client: httpx.AsyncClient, url: str) -> tuple[str, bytes]:
 
 def _extract(html: bytes, url: str) -> DirectPage:
     # 交给 trafilatura 按页面声明识别编码，国内站点不少只在 meta 里写 GBK。
+    tree = trafilatura.load_html(html)
+    blocks: list[tuple[str, str, str]] = []
+    if tree is not None:
+        # 代码块和标签页先处理，不然常被 trafilatura 当噪声去掉（见 code_blocks）
+        try:
+            code_blocks.show_tab_panels(tree)
+            blocks = code_blocks.take_code_blocks(tree)
+        except Exception:
+            # 处理不了的页面照原来那样提取（树可能改了一半，从头来），不为这个转去付费的上游
+            logger.exception("reader_code_blocks_failed domain=%s", urlsplit(url).hostname)
+            tree, blocks = None, []
     content = trafilatura.extract(
-        html,
+        tree if tree is not None else html,
         url=url,
         output_format="markdown",
         include_tables=True,
         include_links=True,
     )
+    if content and blocks:
+        content = code_blocks.put_back(content, blocks)
     if not content or len(content.strip()) < DIRECT_READ_MIN_CHARS:
         raise DirectReadSkipped("extract_too_short")
     # 只取标题：实测日期常被填成当天、站点名常是版权行，不可靠就不给。

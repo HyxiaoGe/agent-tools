@@ -1458,6 +1458,152 @@ class DirectReadTests(unittest.IsolatedAsyncioTestCase):
     def test_container_ships_direct_read_module(self):
         dockerfile = Path(__file__).with_name("Dockerfile").read_text()
         self.assertIn("direct_read.py", dockerfile)
+        self.assertIn("code_blocks.py", dockerfile)
+
+
+def _doc(body: str) -> bytes:
+    """一篇文档页：前后几段说明，中间放要测的代码块。"""
+    prose = "".join(
+        f"<p>第{i}段说明：中间件可以在模型调用前后插入自己的逻辑，比如限制消息条数、记录模型返回的内容，或者在满足条件时提前结束。</p>"
+        for i in range(4)
+    )
+    return (
+        "<html><head><title>自定义中间件</title></head><body>"
+        "<nav>" + "".join(f'<a href="/docs/{i}">目录{i}</a>' for i in range(30)) + "</nav>"
+        f"<main><article><h1>自定义中间件</h1>{prose}{body}{prose}</article></main>"
+        "<footer>版权所有</footer></body></html>"
+    ).encode()
+
+
+class CodeBlockTests(unittest.TestCase):
+    """直接读取保住代码块：文档站包代码的那几层常被 trafilatura 当噪声去掉（见 code_blocks）。"""
+
+    def extract(self, body: str) -> str:
+        return direct_read._extract(_doc(body), "https://docs.example.com/middleware").content
+
+    def test_code_in_a_scrollbar_wrapper_is_kept_with_language_indentation_and_blank_lines(self):
+        # Mintlify（docs.langchain.com）：class 里的 scrollbar 让 trafilatura 当成导航栏
+        content = self.extract(
+            '<div class="base-ui-disable-scrollbar"><div class="code-block"><button>Copy</button>'
+            '<pre class="shiki" language="python"><code>'
+            '<span class="line">def check(state):</span>\n'
+            '<span class="line">    return state["messages"]</span>\n'
+            '<span class="line"></span>\n'
+            '<span class="line">limit = 50</span>'
+            "</code></pre></div></div>"
+        )
+
+        self.assertIn('```python\ndef check(state):\n    return state["messages"]\n\nlimit = 50\n```', content)
+        self.assertIn("第3段说明", content)
+        self.assertNotIn("Copy", content)
+        self.assertNotIn("AGENTTOOLSCODE", content)
+
+    def test_code_in_a_button_group_wrapper_keeps_its_file_name(self):
+        # Next.js 文档：外层 class 有 group/copy，含 button；文件名在代码上面一行
+        content = self.extract(
+            '<div class="my-4 rounded-lg group/copy relative overflow-hidden" data-agent-language="tsx">'
+            '<div class="flex"><span class="truncate">app/page.tsx</span><button aria-label="Copy">'
+            "<svg></svg></button></div>"
+            "<div><pre><code>export default function Page() {\n  return &lt;h1&gt;Hello&lt;/h1&gt;\n}</code></pre></div></div>"
+        )
+
+        self.assertIn("app/page.tsx\n```\nexport default function Page() {\n  return <h1>Hello</h1>\n}\n```", content)
+
+    def test_code_inside_a_list_item_keeps_lines_and_is_not_escaped(self):
+        # docs.python.org：列表项里的代码以前被压成一行、下划线被转义
+        content = self.extract(
+            "<ol><li><p>先定义一个协程：</p>"
+            '<div class="highlight-python3"><div class="highlight"><pre>'
+            "<span></span><span class=\"kn\">import</span> asyncio\n\n"
+            "<span class=\"k\">async</span> <span class=\"k\">def</span> say_after(delay):\n"
+            "    <span class=\"k\">await</span> asyncio.sleep(delay)\n"
+            "</pre></div></div></li></ol>"
+        )
+
+        self.assertIn("```\nimport asyncio\n\nasync def say_after(delay):\n    await asyncio.sleep(delay)\n```", content)
+        self.assertNotIn("say\\_after", content)
+
+    def test_every_tab_panel_is_shown_under_its_label_and_the_tab_strip_is_removed(self):
+        content = self.extract(
+            '<div role="tablist"><button role="tab" aria-controls="p-dec" aria-selected="true">Decorator</button>'
+            '<button role="tab" aria-controls="p-cls">Class</button></div>'
+            '<div role="tabpanel" id="p-dec"><pre><code class="language-python">@before_model\ndef check(state): ...</code></pre></div>'
+            '<div role="tabpanel" id="p-cls" class="hidden" hidden>'
+            '<pre><code class="language-python">class Check(AgentMiddleware):\n    def before_model(self, state): ...</code></pre></div>'
+        )
+
+        self.assertIn("Decorator:\n\n```python\n@before_model\ndef check(state): ...\n```", content)
+        self.assertIn("Class:\n\n```python\nclass Check(AgentMiddleware):\n    def before_model(self, state): ...\n```", content)
+        self.assertEqual(content.count("Decorator"), 1)
+
+    def test_an_empty_tab_panel_gets_no_label(self):
+        # 只渲染选中那一页的站：别的页是空的
+        content = self.extract(
+            '<div role="tablist"><button role="tab" aria-controls="p-ts">TypeScript</button>'
+            '<button role="tab" aria-controls="p-js">JavaScript</button></div>'
+            '<div role="tabpanel" id="p-ts"><pre><code>const x: number = 1</code></pre></div>'
+            '<div role="tabpanel" id="p-js" hidden></div>'
+        )
+
+        self.assertIn("TypeScript:\n\n```\nconst x: number = 1\n```", content)
+        self.assertNotIn("JavaScript", content)
+
+    def test_lines_split_by_br_or_divs_get_single_newlines_and_line_numbers_are_dropped(self):
+        content = self.extract(
+            "<pre>x = 1<br>y = 2<br/>z = x + y</pre>"
+            '<pre><code><div class="line-numbers"><span>1</span><span>2</span></div>'
+            '<div class="line">a = 1</div>\n<div class="line">b&nbsp;=&nbsp;2</div></code></pre>'
+        )
+
+        self.assertIn("```\nx = 1\ny = 2\nz = x + y\n```", content)
+        self.assertIn("```\na = 1\nb = 2\n```", content)
+
+    def test_backticks_in_code_get_a_longer_fence(self):
+        content = self.extract("<pre><code>doc = '''\n```python\nprint(1)\n```\n'''</code></pre>")
+
+        self.assertIn("````\ndoc = '''\n```python\nprint(1)\n```\n'''\n````", content)
+
+    def test_prose_next_to_code_keeps_its_links_and_is_not_moved(self):
+        # react.dev：说明和代码在同一层 div 里，说明不能被当成代码上面的标签
+        content = self.extract(
+            '<div class="intro"><p><code>useState</code> 是一个 Hook，用来给组件加'
+            '<a href="https://docs.example.com/state">状态变量</a>。</p>'
+            "<pre><code>const [state, setState] = useState(initialState)</code></pre></div>"
+        )
+
+        self.assertIn("`useState` 是一个 Hook，用来给组件加[状态变量](https://docs.example.com/state)。", content)
+        self.assertIn("```\nconst [state, setState] = useState(initialState)\n```", content)
+
+    def test_link_buttons_around_an_editable_example_are_not_text(self):
+        # react.dev 可以改的示例：代码旁边是“Fork”链接
+        content = self.extract(
+            '<div class="sandpack"><div class="sp-tabs"><a href="https://codesandbox.io/s/x">Fork</a></div>'
+            '<div class="sp-editor"><pre class="sp-cm"><code>'
+            '<div class="cm-line">export default function Counter() {</div>'
+            '<div class="cm-line">  return null</div><div class="cm-line">}</div>'
+            "</code></pre></div></div>"
+        )
+
+        self.assertIn("```\nexport default function Counter() {\n  return null\n}\n```", content)
+        self.assertNotIn("Fork", content)
+
+    def test_a_page_code_blocks_cannot_handle_is_still_read_the_old_way(self):
+        with patch("direct_read.code_blocks.take_code_blocks", side_effect=ValueError("odd page")), self.assertLogs(
+            "reader_service", level="ERROR"
+        ) as logs:
+            content = self.extract("<pre><code>x = 1</code></pre>")
+
+        self.assertIn("第3段说明", content)
+        self.assertNotIn("AGENTTOOLSCODE", content)
+        self.assertIn("reader_code_blocks_failed domain=docs.example.com", logs.output[0])
+
+    def test_adjacent_code_blocks_are_separated_by_one_blank_line(self):
+        content = self.extract(
+            '<p>解构之后：</p><div class="code"><pre><code class="language-js">const { id } = object</code></pre></div>'
+            '<div class="code"><pre><code class="language-template">{{ id + 1 }}</code></pre></div>'
+        )
+
+        self.assertIn("```js\nconst { id } = object\n```\n\n```template\n{{ id + 1 }}\n```", content)
 
 
 class QuotaTests(unittest.TestCase):
