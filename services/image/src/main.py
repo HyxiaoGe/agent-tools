@@ -18,10 +18,12 @@ from src import __version__
 from src.api.generate import validation_exception_handler
 from src.api.router import v1_router
 from src.config import Settings
+from src.mcp.owned import init_owned_mcp, owned_mcp
 from src.mcp.server import init_mcp, mcp
 from src.middleware.auth import CallerAuthMiddleware
 from src.middleware.disconnect import DisconnectMiddleware
 from src.services.cache import CacheService
+from src.services.image_store import ImageStore
 from src.services.usage import usage_store
 
 
@@ -49,6 +51,12 @@ def configure_logging() -> None:
     logging.basicConfig(format="%(message)s", level=logging.INFO)
 
 
+def image_store(settings: Settings) -> ImageStore:
+    """/v2/mcp 出的图：私有目录和记录（默认在 STORAGE_DIR 的上一级，和用量库一样在 ./storage 卷里）。"""
+    base = Path(settings.storage_dir).parent
+    return ImageStore(settings.owned_storage_dir or base / "owned", settings.image_db_path or base / "images.sqlite3")
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging()
 
@@ -56,6 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings = Settings()
 
     mcp_app = mcp.http_app(path="/mcp", stateless_http=True)
+    v2_app = owned_mcp.http_app(path="/mcp", stateless_http=True)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
@@ -70,9 +79,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             path = settings.usage_db_path or str(Path(settings.storage_dir).parent / "usage.sqlite3")
             await usage_store(path, settings.usage_retention_days).ping()
         init_mcp(settings, cache_service, http_client=getattr(app.state, "http_client", None))
+        app.state.image_store = image_store(settings)
+        init_owned_mcp(
+            settings, cache_service, app.state.image_store, http_client=getattr(app.state, "http_client", None)
+        )
         storage_path = Path(settings.storage_dir)
         storage_path.mkdir(parents=True, exist_ok=True)
-        async with mcp_app.lifespan(app):
+        async with mcp_app.lifespan(app), v2_app.lifespan(app):
             yield
         # Shutdown
         await redis_client.aclose()
@@ -108,7 +121,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore[arg-type]
     app.include_router(v1_router, prefix="/v1")
 
-    # Mount MCP server
+    # Mount MCP servers：/v2/mcp（图存在服务里、按 id 取）要挂在 "/" 前面，否则被旧的那个吃掉
+    app.mount("/v2", v2_app)
     app.mount("/", mcp_app)
 
     return app

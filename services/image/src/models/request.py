@@ -28,7 +28,7 @@ class GenerateRequest(BaseModel):
         description="Pixel budget as WxH; aspect_ratio controls shape. Seedream fits the budget to its model's "
         "limits; Gemini does not use size. Default 1024x1024.",
     )
-    style: str | None = Field(None, description="Style hint e.g. watercolor")
+    style: str | None = Field(None, max_length=200, description="Style hint e.g. watercolor")
     fallback_model: str | None = Field(
         None,
         description="Model to retry with if the primary model's content filter blocks the request or its "
@@ -80,7 +80,11 @@ class GenerateRequest(BaseModel):
     @field_validator("prompt")
     @classmethod
     def strip_prompt(cls, v: str) -> str:
-        return v.strip()
+        # min_length 看的是去空格前的原值：全是空格的 prompt 以前会一路发到上游（占限流、花额度）
+        v = v.strip()
+        if not v:
+            raise ValueError("prompt must not be blank")
+        return v
 
     @field_validator("aspect_ratio")
     @classmethod

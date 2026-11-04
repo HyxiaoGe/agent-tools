@@ -16,6 +16,14 @@ _CORRELATION_PATTERN = re.compile(r"[a-zA-Z0-9_.:-]{1,128}")
 _SCENES = frozenset({"chat_image", "image_edit", "validation"})
 
 
+_PROTECTED = frozenset({"/mcp", "/v2/mcp", "/v1/generate", "/v1/models", "/v1/usage", "/v1/billing"})
+
+
+def _protected(path: str) -> bool:
+    # /v1/images/{id}：/v2/mcp 出的图，只有所属产品能取、能删
+    return path in _PROTECTED or path.startswith("/v1/images/")
+
+
 def _same_bearer(header: str, key: str) -> bool:
     return secrets.compare_digest(header.encode("utf-8"), ("Bearer " + key).encode("utf-8"))
 
@@ -39,7 +47,7 @@ class CallerAuthMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         path = scope.get("path", "").rstrip("/")
-        if scope["type"] != "http" or path not in {"/mcp", "/v1/generate", "/v1/models", "/v1/usage", "/v1/billing"}:
+        if scope["type"] != "http" or not _protected(path):
             await self.app(scope, receive, send)
             return
         headers = Headers(scope=scope)

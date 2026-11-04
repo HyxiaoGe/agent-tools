@@ -218,6 +218,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     storage_dir: str = "storage/images"
     static_url_prefix: str = "/static/images"
+    # /v2/mcp 出的图：记归属，不公开，只能用本产品的密钥按 id 取、删（见 services/image_store.py）。
+    # 留空：STORAGE_DIR 的上一级 + /owned 和 /images.sqlite3（默认 storage/owned、storage/images.sqlite3）。
+    owned_storage_dir: str | None = None
+    image_db_path: str | None = None
     host: str = "0.0.0.0"
     port: int = 8090
     service_base_url: str = "http://localhost:8090"

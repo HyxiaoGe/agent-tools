@@ -37,6 +37,16 @@ def init_mcp(settings: Settings, cache: CacheService, http_client=None) -> None:
     _http_client = http_client
 
 
+def request_context():  # noqa: ANN201
+    """(lifetime, caller)：HTTP 请求上由 DisconnectMiddleware、CallerAuthMiddleware 放进 state；内存 / stdio MCP 没有 HTTP 请求。
+    /v2/mcp 也用这个（测试替换本模块的 get_http_request 时两个端点一起生效）。"""
+    try:
+        state = get_http_request().state
+    except RuntimeError:
+        return None, None
+    return getattr(state, "image_generation", None), getattr(state, "image_caller", None)
+
+
 def _error_result(
     code: ErrorCode,
     message: str | None = None,
@@ -248,6 +258,8 @@ async def list_models() -> str | ToolResult:
         ratios = ", ".join(model_info.aspect_ratios) if model_info.aspect_ratios else "continuous W:H"
         if model_info.endpoint_type == "images":
             ratios = "1:16 to 16:1"
+        elif model_info.endpoint_type == "dashscope":
+            ratios = "1:8 to 8:1 (wider ratios are clamped)"
         lines.append(
             f"{i}. {model_info.name} ({model_info.id}) — {model_info.provider} — aspect ratios: {ratios}"
             + (f" — grounding: {' + '.join(model_info.search_types)} search" if model_info.grounding else "")

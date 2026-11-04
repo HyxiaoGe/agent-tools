@@ -33,6 +33,7 @@ def compute_cache_key(
     reference_subject: str | None = None,
     *,
     namespace: str | None = None,
+    source_image: str | None = None,
 ) -> str:
     """Compute SHA-256 cache key from normalized generation parameters.
 
@@ -61,6 +62,9 @@ def compute_cache_key(
         # (or prompted) under older rules must not be served again (v2: whole back
         # views first + reference hint in the prompt).
         raw += f":subject@v2={reference_subject.strip().lower()}"
+    if source_image:
+        # /v2/mcp 改图：改的是服务自己的哪张图（按 id，不按地址）
+        raw += f":source={source_image}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 

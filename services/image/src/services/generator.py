@@ -17,15 +17,16 @@ import anyio
 import httpx
 import structlog
 
-from src.config import SUPPORTED_MODELS, Settings
+from src.config import GEMINI_FLASH_31_ASPECT_RATIOS, SUPPORTED_MODELS, Settings
 from src.models.errors import ERROR_SPECS, ErrorCode
 from src.models.identity import CallerIdentity
 from src.models.lifetime import RequestLifetime
 from src.models.request import MAX_REFERENCE_IMAGES, GenerateRequest
-from src.models.response import GenerateResponse, ReferenceSearchInfo
+from src.models.response import GenerateResponse, ReferenceSearchInfo, StoredGenerateResult
 from src.services.admission import AdmissionError, generation_admission
 from src.services.budget import CLEANUP_TIMEOUT_SECONDS, current_budget, generation_scope
 from src.services.cache import CacheService, compute_cache_key
+from src.services.image_store import ImageRecord, ImageStore, UnsupportedImage
 from src.services.metrics import (
     CACHE_HITS,
     FALLBACKS,
@@ -43,6 +44,15 @@ from src.services.usage import UsageStore, ark_estimate, usage_store
 class UsageRun:
     request_id: str
     store: UsageStore | None
+
+
+@dataclass(frozen=True)
+class OwnedTarget:
+    """/v2/mcp：出的图存进 ImageStore、归调用方产品；source 是要改的那张（本产品的图），source_data 是它的内容。"""
+
+    store: ImageStore
+    source: ImageRecord | None = None
+    source_data: bytes | None = None
 
 
 _caller_identity: ContextVar[CallerIdentity | None] = ContextVar("caller_identity", default=None)
@@ -756,8 +766,9 @@ async def handle_generate(
     entry: str = "rest",
     lifetime: RequestLifetime | None = None,
     caller: CallerIdentity | None = None,
-) -> GenerateResponse:
-    """设置独立身份上下文；落盘记账失败时不提交新的上游请求。"""
+    owned: OwnedTarget | None = None,
+) -> GenerateResponse | StoredGenerateResult:
+    """设置独立身份上下文；落盘记账失败时不提交新的上游请求。owned 见 OwnedTarget，不传是旧的公开静态图。"""
     if caller is None or caller.auth_method != "service_key" or caller.app_id not in settings.products:
         raise GenerationError(ErrorCode.UNAUTHORIZED)
     started = lifetime.started_at if lifetime else time.monotonic()
@@ -789,7 +800,7 @@ async def handle_generate(
                 )
             except Exception:
                 raise GenerationError(ErrorCode.USAGE_UNAVAILABLE) from None
-        result = await _handle_generate(request, settings, cache, http_client, entry, lifetime)
+        result = await _handle_generate(request, settings, cache, http_client, entry, lifetime, owned)
         outcome = "cached" if result.cached else "success"
         return result
     except asyncio.CancelledError:
@@ -830,7 +841,8 @@ async def _handle_generate(
     http_client: httpx.AsyncClient | None,
     entry: str,
     lifetime: RequestLifetime | None,
-) -> GenerateResponse:
+    owned: OwnedTarget | None = None,
+) -> GenerateResponse | StoredGenerateResult:
     """Generate (or fetch from cache) and emit one ``generation_finished`` summary log."""
     started = lifetime.started_at if lifetime is not None else time.monotonic()
     _upstream_attempts.set(0)
@@ -855,6 +867,8 @@ async def _handle_generate(
         "grounding": request.grounding,
         "no_cache": request.no_cache,
         "reference_subject": request.reference_subject,
+        "owned": owned is not None,
+        "source_image_id": owned.source.id if owned and owned.source else None,
         "prompt_len": len(request.prompt),
         "prompt_sha8": hashlib.sha256(request.prompt.encode()).hexdigest()[:8],
         # Overwritten with the effective value once validation passes.
@@ -889,7 +903,7 @@ async def _handle_generate(
                 fields["stage"] = "admission"
                 try:
                     async with generation_admission(cache.redis, settings, caller):
-                        result = await _generate(request, requested_model, settings, cache, http_client)
+                        result = await _generate(request, requested_model, settings, cache, http_client, owned)
                 except AdmissionError as exc:
                     raise GenerationError(exc.code, retry_after=exc.retry_after) from None
         except TimeoutError:
@@ -961,7 +975,32 @@ def _supports_aspect_ratio(model: str, aspect_ratio: str) -> bool:
     if info.endpoint_type == "images":
         ratio = _parse_ratio(aspect_ratio)
         return ratio is not None and 1 / ARK_MAX_RATIO <= ratio[0] / ratio[1] <= ARK_MAX_RATIO
+    if info.endpoint_type == "dashscope":
+        # 更扁、更长的会被 _resolve_qwen_size 悄悄压到 8:1；默认备用链据此跳过它，不出变了形的图
+        ratio = _parse_ratio(aspect_ratio)
+        return ratio is not None and 1 / QWEN_MAX_RATIO <= ratio[0] / ratio[1] <= QWEN_MAX_RATIO
     return True
+
+
+def tool_aspect_ratios(settings: Settings) -> tuple[str, ...]:
+    """/v2/mcp 开放给模型的比例：主模型、两档 quality 和默认备用链上每个模型都接受的那些，
+    保证主模型失败时一定能换备用（产品原来只开 Gemini 也接受的 10 个就是为了这个）。改了模型配置跟着变。"""
+    chain = {settings.default_model, *QUALITY_MODELS.values(), *settings.default_fallback_models}
+    models = [m for m in chain if m in SUPPORTED_MODELS]
+    return tuple(r for r in GEMINI_FLASH_31_ASPECT_RATIOS if all(_supports_aspect_ratio(m, r) for m in models))
+
+
+def closest_aspect_ratio(width: int, height: int, ratios: tuple[str, ...]) -> str:
+    """改图没填比例时沿用原图形状：取 ratios 里和原图最接近的（对数距离，Fusion b6a2b37a 的算法）。"""
+    if width <= 0 or height <= 0 or not ratios:
+        return "1:1"
+    target = math.log(width / height)
+
+    def distance(ratio: str) -> float:
+        w, h = _parse_ratio(ratio) or (1, 1)
+        return abs(math.log(w / h) - target)
+
+    return min(ratios, key=distance)
 
 
 def _validate(request: GenerateRequest, model: str) -> None:
@@ -1256,13 +1295,93 @@ async def _generate_with_fallback(
     raise AssertionError("unreachable: the loop returns or raises")
 
 
+async def _from_cache(
+    cached: dict, model: str, owned: OwnedTarget | None
+) -> GenerateResponse | StoredGenerateResult | None:
+    """缓存里的结果。/v2/mcp 的复制一份、给新 id（每张图只属于一次生成，删哪张都不影响别的）；
+    原图已经被删了就是 None，按没命中处理。"""
+    if owned is None:
+        return _cached_response(cached, model)
+    caller = _caller_identity.get()
+    copy = await owned.store.copy(
+        cached.get("id", ""), app_id=caller.app_id, edited_from=owned.source.id if owned.source else None
+    )
+    if copy is None:
+        logger.info("owned_cache_stale", cached_id=cached.get("id"))
+        return None
+    _log_fields.get().update(generation_id=copy.id, artifact_app_id=caller.app_id, artifact_subject=caller.subject)
+    return StoredGenerateResult(
+        image=copy.public(),
+        requested_model=model,
+        fallback_used=copy.model != model,
+        grounding_used=cached.get("grounding_used", False),
+        cached=True,
+        reference_search=cached.get("reference_search"),
+    )
+
+
+async def _save_owned(
+    owned: OwnedTarget,
+    image_bytes: bytes,
+    actual_model: str,
+    model: str,
+    grounding_used: bool,
+    reference_search: ReferenceSearchInfo | None,
+    cache: CacheService,
+    cache_key: str,
+    outcome: SearchOutcome | None,
+) -> StoredGenerateResult:
+    caller = _caller_identity.get()
+    try:
+        record = await owned.store.save(
+            app_id=caller.app_id,
+            data=image_bytes,
+            model=actual_model,
+            edited_from=owned.source.id if owned.source else None,
+        )
+    except UnsupportedImage:
+        # 产品要按 mime、宽高画卡片，认不出来的不存（旧的静态图照存）
+        raise GenerationError(
+            ErrorCode.NO_IMAGE_RETURNED,
+            "The model returned an image in an unsupported format.",
+            model=actual_model,
+            upstream_detail="owned image: unsupported format or unreadable size",
+        ) from None
+    _log_fields.get().update(
+        generation_id=record.id,
+        artifact_app_id=caller.app_id,
+        artifact_subject=caller.subject,
+        output_size=f"{record.width}x{record.height}",
+    )
+    metadata = {
+        "id": record.id,
+        "model": actual_model,
+        "grounding_used": grounding_used,
+        "created_at": record.created_at,
+        "reference_search": reference_search.model_dump() if reference_search else None,
+        "app_id": caller.app_id,
+        "subject": caller.subject,
+    }
+    await cache.set_cached(cache_key, metadata, ttl=GENERATION_TTL.get(outcome.status) if outcome else None)
+    REQUEST_COUNT.labels(model=actual_model, status="success").inc()
+    return StoredGenerateResult(
+        image=record.public(),
+        requested_model=model,
+        fallback_used=actual_model != model,
+        grounding_used=grounding_used,
+        cached=False,
+        reference_search=reference_search,
+    )
+
+
 async def _generate(
     request: GenerateRequest,
     model: str,
     settings: Settings,
     cache: CacheService,
     http_client: httpx.AsyncClient | None,
-) -> GenerateResponse:
+    owned: OwnedTarget | None = None,
+) -> GenerateResponse | StoredGenerateResult:
     """Orchestrate generation: validate → cache check → generate (with fallback) → save → cache set."""
     _validate(request, model)
     _log_fields.get()["stage"] = "cache"
@@ -1281,16 +1400,19 @@ async def _generate(
         request.grounding,
         request.reference_images,
         request.reference_subject,
-        namespace=_caller_identity.get().app_id,
+        # /v2/mcp 的缓存和旧的分开：旧缓存里是公开静态目录的图，不能混进来
+        namespace=f"owned:{_caller_identity.get().app_id}" if owned else _caller_identity.get().app_id,
+        source_image=owned.source.id if owned and owned.source else None,
     )
 
     lock_token: str | None = None
     if not request.no_cache:
         cached = await cache.get_cached(cache_key)
-        if cached is not None:
+        hit = await _from_cache(cached, model, owned) if cached is not None else None
+        if hit is not None:
             CACHE_HITS.inc()
             REQUEST_COUNT.labels(model=model, status="cached").inc()
-            return _cached_response(cached, model)
+            return hit
 
         # Thundering-herd protection: one generation per parameter set; identical
         # requests wait for its result. no_cache skips this — the caller asked
@@ -1298,13 +1420,17 @@ async def _generate(
         lock_token = await cache.acquire_lock(cache_key, ttl=math.ceil(settings.generation_timeout_seconds) + 5)
         if lock_token is None:
             cached = await cache.wait_for_cached(cache_key)
-            if cached is not None:
-                return _cached_response(cached, model)
+            hit = await _from_cache(cached, model, owned) if cached is not None else None
+            if hit is not None:
+                return hit
             raise GenerationError(ErrorCode.GENERATION_IN_PROGRESS)
 
     try:
         _log_fields.get()["stage"] = "references"
         references = await _load_references(request, settings, http_client)
+        if owned is not None and owned.source is not None and owned.source_data is not None:
+            # 改图：原图从本地读，放在第一张（不经网址，也就不依赖 SERVICE_BASE_URL）
+            references = [ReferenceImage(owned.source.mime_type, owned.source_data), *references]
         outcome = await _find_references(request, len(references), settings, cache, http_client)
         reference_urls = list(request.reference_images or [])
         reference_search = None
@@ -1336,6 +1462,10 @@ async def _generate(
         _log_fields.get()["stage"] = "persist"
 
         grounding_used = _grounding_applies(request, actual_model)
+        if owned is not None:
+            return await _save_owned(
+                owned, image_bytes, actual_model, model, grounding_used, reference_search, cache, cache_key, outcome
+            )
         gen_id = str(uuid.uuid4())
         filename = save_image(image_bytes, gen_id, fmt, settings.storage_dir)
         caller = _caller_identity.get()

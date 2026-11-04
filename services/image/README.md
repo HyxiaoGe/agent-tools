@@ -50,6 +50,7 @@
 - [Seedream 的尺寸](#seedream-的尺寸)
 - [参考图（reference_images）](#参考图reference_images)
 - [图片编辑](#图片编辑)
+- [产品用的生图工具（/v2/mcp）](#产品用的生图工具v2mcp)
 - [版本与 MCP 调用方更新](#版本与-mcp-调用方更新)
 - [自动找参考图（reference_subject）](#自动找参考图reference_subject)
 
@@ -61,6 +62,8 @@
 |---|---|
 | REST | `POST /v1/generate`、`GET /v1/models`、`GET /v1/health` |
 | MCP | `generate_image`、`list_models`（路径 `/mcp`） |
+| 产品用的 MCP | `generate_image`（路径 `/v2/mcp`）：图存在服务里、归产品，按 id 取、删，见[产品用的生图工具](#产品用的生图工具v2mcp) |
+| 取图、删图 | `GET`、`DELETE /v1/images/{id}`（只认所属产品的密钥） |
 | 费用查询 | `GET /v1/usage`（用量与标价估算）、`GET /v1/billing?bill_period=YYYY-MM`（官方月度分账） |
 | 每日额度 | `GET /v1/quota?day=YYYY-MM-DD`（各上游当天调用 / 被拦次数与上限，不需要密钥，见[每日上游额度](#每日上游额度)） |
 
@@ -266,6 +269,51 @@ Pro / Flash 不支持原生联网搜索，`grounding=true` 在这两个模型上
 Seedream Flash / Pro 均可在 `prompt` 中使用 `<point>x y</point>` 或 `<bbox>x1 y1 x2 y2</bbox>` 定位编辑区域，坐标相对于整张参考图归一化到 0–999。例如：`只编辑图1 <bbox>400 420 610 620</bbox> 区域，在杯身添加金色星标，尽量保留其他部分。` 依赖该坐标协议时建议设置 `fallback_model="none"`，避免跨供应商备用对语法的解释不同。
 
 坐标定位不是像素遮罩，不保证区域外像素完全不变。当前工具没有开放本地文件上传、`mask` / `strength`、多图层返回或透明输出控制。实测与能力边界见[编辑调研](docs/SEEDREAM_EDITING_RESEARCH.md)。
+
+## 产品用的生图工具（/v2/mcp）
+
+给产品（Fusion、灵稿）的模型直接用的 `generate_image`，挂在 `/v2/mcp`。产品经网关连 `/image/v2/mcp`。旧的 `/mcp` 和 REST 契约不变，出的图照旧放在公开的静态目录。
+
+和旧工具的区别：
+
+- **图存在服务里，归出图的产品。**
+  - 文件放在私有目录（默认 `storage/owned`），每张在 `storage/images.sqlite3` 里记一行：所属产品、mime、宽、高、字节数、实际模型、改自哪张、创建时间。
+  - 结果里只有图片 id，没有地址。产品后端用自己的密钥 `GET /v1/images/{id}` 取图转给浏览器。返回带 `Cache-Control: private, max-age=31536000, immutable`，因为图不会变。
+  - 别的产品的、不存在的一律 404，不透露有没有这张图。
+  - 不自动清理。产品删对话时 `DELETE /v1/images/{id}`。删过再删、不是本产品的都回 204。
+- **只开放模型该填的参数。**
+  - `prompt`（1–1000，全是空格算参数错）、`aspect_ratio`、`style`（≤60）、`quality`、`regenerate`、`reference_subject`（≤80）、`source_image_id`。
+  - `grounding` 固定开，`regenerate` 就是 `no_cache`。
+  - 不开放 `model`、`size`、`fallback_model`、`reference_images`。
+- **比例的可选值按主模型、两档 quality 和默认备用链算。** 取链上每个模型都接受的，保证主模型失败时一定换得了备用。默认配置下是 Gemini 的 14 个。
+- **改图收服务自己的图片 id（`source_image_id`）。**
+  - 查不到、不是本产品的、格式不对，都回 `source_image_unavailable`：不出图、不计费，也不占服务里的限流和并发（网关的每日上限照算一次调用）。
+  - 没填比例时，取可选比例里和原图最接近的。
+  - 原图从本地读，不经网址。
+- **每张图只属于一次生成。** 缓存和旧工具分开。命中时复制一份、给新 id，删哪张都不影响别的。缓存指着的图已经删了，就当没命中。
+- **给模型的文字。**
+  - 成功：画成了、图片 id 只用来改图、别输出链接；没找到参考照片时如实说外观可能不同。
+  - 失败：按错误码给不同说法，比如内容审核拦了别换说法重试、额度用完今天别再试、找不到原图要如实说是重画的。
+  - 不带地址，不带模型名。
+  - 说明用英文写在服务里，产品可以在后面接自己的一段。
+- **失败结果。** structuredContent 是 `{ok:false, error:{code, message, retryable, fallback_from?, retry_after?}}`，`isError` 保持 false，和 weather、search、reader 的 MCP 一样。
+
+成功的 structuredContent：
+
+```json
+{
+  "ok": true,
+  "image": {"id": "…", "mime_type": "image/jpeg", "width": 1024, "height": 1024, "bytes": 512345,
+            "model": "doubao-seedream-5-0-flash", "edited_from": null, "created_at": "…"},
+  "requested_model": "doubao-seedream-5-0-flash",
+  "fallback_used": false,
+  "grounding_used": false,
+  "cached": false,
+  "reference_search": null
+}
+```
+
+每轮最多几张图、图是不是这段对话里的，由产品管：服务只认到产品。
 
 ## 版本与 MCP 调用方更新
 

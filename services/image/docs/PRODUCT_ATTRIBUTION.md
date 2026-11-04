@@ -22,7 +22,7 @@ X-Request-ID: <产品后端生成的调用关联 ID>
 
 默认且仅支持严格产品密钥认证。`AUTH_MODE` 可以省略或设为 `required`；`legacy` / `mixed` 配置会启动失败，避免旧配置意外开放调用。旧 `API_KEY`、`ALLOW_LEGACY_ANONYMOUS`、`LEGACY_APP_ID`、`RATE_LIMIT_PER_IP` 和共享 `ARK_API_KEY` 已移除，不再参与认证或凭证选择。部署前应删除这些过时配置，保留产品专用 Key。
 
-REST `/v1/generate`、`/v1/models`、`/v1/usage`、`/v1/billing` 和整个 HTTP `/mcp` 端点均要求产品服务密钥，缺失、无效或误配到多个产品的相同密钥返回 401。用量和官方账单只能查该密钥所属产品。内存/stdio 生图和模型读取不提供匿名绕过。
+REST `/v1/generate`、`/v1/models`、`/v1/usage`、`/v1/billing`、`/v1/images/{id}` 和整个 HTTP `/mcp`、`/v2/mcp` 端点均要求产品服务密钥，缺失、无效或误配到多个产品的相同密钥返回 401。用量和官方账单只能查该密钥所属产品。内存/stdio 生图和模型读取不提供匿名绕过。
 
 `/v1/health`、`/metrics`、OpenAPI 和现有静态图片 URL 的公开行为保持原样；本次接入不提供图片访问权限隔离。鉴权拒绝发生在生图上游调用之前。
 
