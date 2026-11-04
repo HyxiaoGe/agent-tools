@@ -66,11 +66,14 @@ Response:
 
 ## MCP Server
 
-The service exposes MCP tools at `/mcp` for AI agents:
+The service exposes MCP tools at `/mcp` (stateless streamable HTTP: one POST per call, no session). Through the gateway it is `/search/mcp`.
 
-- `search` — General web/news/image search
+- `search_web` — for products' models: `query`, `count` (1-20, default 10), `recency_days` (1-365, rounded up to 1/7/31/365), `domains` (≤5 bare domains, results filtered to them). Returns deduplicated results with `title` / `url` / `snippet` (≤1000 chars) / `published_at`; failures come back as `{ok: false, error: {code, message, retryable}}` (`bad_arguments`, `quota_exhausted`, `timeout`, `rate_limited`, `upstream_error`, `not_configured`). The model sees JSON without `meta` (provider chain); `structuredContent` has everything
+- `search` — General web/news/image search (full `SearchResponse`)
 - `search_news` — News search shortcut
 - `search_images` — Image search shortcut
+
+All tools share REST's fallback chain, cache and daily budget.
 
 Claude Code integration:
 
@@ -100,6 +103,7 @@ See [.env.example](.env.example) for all available options.
 | `DEEPSEEK_API_KEY` | — | DeepSeek Search API key |
 | `DEEPSEEK_API_URL` | `https://api.deepseek.com` | DeepSeek API base URL |
 | `REDIS_URL` | `redis://search-redis:6379` | Redis connection URL (docker compose pins it to the bundled search-redis) |
+| `SEARCH_DEADLINE_SECONDS` | `25` | Total time for one search (primary + fallbacks); later fallbacks are skipped once it passes. Kept under the gateway's 30s |
 | `CACHE_TTL_WEB` | `600` | Web search cache TTL (seconds) |
 | `CACHE_TTL_NEWS` | `300` | News search cache TTL (seconds) |
 | `RATE_LIMIT_GLOBAL` | `40/second` | Global rate limit |

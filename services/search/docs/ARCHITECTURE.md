@@ -27,15 +27,25 @@ Search Service is a FastAPI middleware that provides a unified search API over m
 - `limiter.py` -- slowapi rate limiter (per-IP)
 - `logger.py` -- structlog with JSON output (console in debug mode)
 
-### 5. Routes (`app/routes/`)
-- `search.py` -- POST /search: cache check -> provider call -> fallback -> cache set
+### 5. Search flow (`app/searching.py`)
+- `run_search()` -- cache check -> primary provider -> fallback chain -> cache set; shared by REST and MCP
+- Total deadline `SEARCH_DEADLINE_SECONDS` (25s, under the gateway's 30s) across primary + fallbacks
+- Cache is keyed by the requested provider for both read and write, so fallback results are reused
+- `restrict_domains=True` (MCP) filters results to `domain_filters`, because Brave and Tavily ignore them
+- Raises `SearchFailed(primary, errors)` when nothing succeeded; REST re-raises `primary` (503 / 500 as before)
+
+### 6. Routes (`app/routes/`)
+- `search.py` -- POST /search: thin wrapper over `run_search()`, Firecrawl credits recorded in a background task
 - `admin.py` -- health check, provider listing, cache flush
 
-### 6. MCP (`app/mcp/`)
-- FastMCP tools wrapping provider + cache directly (no route dependency)
-- Mounted at root path in main.py
+### 7. MCP (`app/mcp/`)
+- Stateless streamable HTTP at `/mcp` (one POST per call, no session)
+- `search_web.py` -- `search_web`, the tool products give their models: validated arguments, structured errors
+  `{code, message, retryable}`, deduplicated and trimmed results, English description shared by all products
+- `server.py` -- the earlier pass-through tools `search` / `search_news` / `search_images` (full `SearchResponse`)
+- All tools go through `run_search()` (no route dependency)
 
-### 7. App Entry (`app/main.py`)
+### 8. App Entry (`app/main.py`)
 - Lifespan: setup logging, MCP lifespan, Redis cleanup
 - Mounts routers and MCP app
 
@@ -45,19 +55,21 @@ Search Service is a FastAPI middleware that provides a unified search API over m
 config, models  <-- imported by everything (foundation)
 providers       <-- depends on config, models only
 cache, limiter  <-- depends on config, models only
-routes          <-- depends on providers, cache, limiter, logger, models, config
-mcp             <-- depends on providers, cache, models (NOT routes)
+searching       <-- depends on providers (registry), cache, budget, models, config (NOT routes, NOT mcp)
+routes          <-- depends on searching, limiter, logger, models, config
+mcp             <-- depends on searching, budget, models (NOT routes, NOT concrete providers)
 main            <-- wires everything together
 ```
 
 ## Data Flow
 
 ```
-Client -> POST /search
-  -> rate limit check
-  -> Redis cache lookup
+Client -> POST /search (or MCP tools/call)
+  -> rate limit check (REST only)
+  -> Redis cache lookup (Redis errors: log and treat as a miss)
   -> if miss: provider.search()
-  -> if error / insufficient results: fallback chain (SEARCH_FALLBACK_PROVIDERS, in order, stop when enough)
-  -> cache result (if quality threshold met)
+  -> if error / insufficient results: fallback chain (SEARCH_FALLBACK_PROVIDERS, in order, stop when enough,
+     stop at the total deadline)
+  -> cache result under the requested provider (if quality threshold met and time filter not relaxed)
   -> return SearchResponse
 ```

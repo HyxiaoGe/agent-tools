@@ -1,12 +1,16 @@
+"""搜索结果缓存。读写出错（Redis 连不上、存的东西坏了）只记日志，当没命中、不写，搜索照常进行。"""
+
 import hashlib
 import json
 
 import redis.asyncio as redis
 
 from app.config import settings
+from app.logger import get_logger
 from app.models import SearchRequest, SearchResponse, SearchType
 
 _redis: redis.Redis | None = None
+log = get_logger()
 
 
 async def get_redis() -> redis.Redis:
@@ -50,12 +54,16 @@ def _ttl_for_type(search_type: SearchType) -> int:
 
 
 async def get_cached(provider: str, request: SearchRequest) -> SearchResponse | None:
-    r = await get_redis()
     key = build_cache_key(provider, request)
-    data = await r.get(key)
-    if data is None:
+    try:
+        r = await get_redis()
+        data = await r.get(key)
+        if data is None:
+            return None
+        resp = SearchResponse.model_validate_json(data)
+    except Exception as exc:
+        log.warning("cache_read_failed", error=str(exc) or type(exc).__name__)
         return None
-    resp = SearchResponse.model_validate_json(data)
     resp.cached = True
     resp.credits_used = None
     resp.cache_key_version = 3
@@ -63,10 +71,13 @@ async def get_cached(provider: str, request: SearchRequest) -> SearchResponse | 
 
 
 async def set_cached(provider: str, request: SearchRequest, response: SearchResponse) -> None:
-    r = await get_redis()
     key = build_cache_key(provider, request)
     ttl = _ttl_for_type(request.type)
-    await r.setex(key, ttl, response.model_dump_json())
+    try:
+        r = await get_redis()
+        await r.setex(key, ttl, response.model_dump_json())
+    except Exception as exc:
+        log.warning("cache_write_failed", error=str(exc) or type(exc).__name__)
 
 
 async def flush_cache() -> int:

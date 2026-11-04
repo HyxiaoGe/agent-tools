@@ -9,7 +9,8 @@ app/
   main.py          -- FastAPI app, lifespan, router/MCP mounting
   config.py        -- pydantic-settings (Settings from .env)
   models.py        -- SearchRequest, SearchResponse, SearchType
-  cache.py         -- Redis cache (get/set/flush, TTL per search type)
+  cache.py         -- Redis cache (get/set/flush, TTL per search type; get/set errors are logged, never raised)
+  searching.py     -- run_search(): cache -> primary -> fallback chain -> cache, total deadline; shared by REST and MCP
   budget.py        -- per-provider daily call budget (Redis counters, Feishu alerts, 503 when exhausted)
   limiter.py       -- slowapi rate limiter
   logger.py        -- structlog setup (JSON in prod, console in debug)
@@ -21,14 +22,16 @@ app/
     firecrawl.py   -- Firecrawl Search API
     deepseek.py    -- DeepSeek Search API
   routes/
-    search.py      -- POST /search (with fallback + cache logic)
+    search.py      -- POST /search (thin wrapper over searching.run_search)
     admin.py       -- GET /health, GET /providers, DELETE /cache
   mcp/
-    server.py      -- FastMCP tools: search, search_news, search_images
+    server.py      -- FastMCP app (stateless, /mcp); earlier pass-through tools search, search_news, search_images
+    search_web.py  -- search_web: the tool products give their models (validation, trimmed results, structured errors)
 tests/
   test_search.py   -- model / provider / route unit tests
   test_budget.py   -- daily budget guard
   test_fallback_chain.py -- fallback chain ordering and route behaviour
+  test_search_web.py -- search_web arguments / results / errors, domain filtering, deadline, cache failures
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed layer descriptions.
@@ -38,7 +41,10 @@ See [docs/CODING_CONVENTIONS.md](docs/CODING_CONVENTIONS.md) for code style rule
 
 - Providers must implement the `SearchProvider` protocol (app/providers/base.py)
 - Routes must not import providers directly -- use registry
-- MCP tools must not import routes -- call providers/cache directly
+- MCP tools must not import routes -- call `app.searching.run_search` (same fallback, cache and budget as REST)
+- The search flow (`app/searching.py`) must not import routes or mcp
+- `search_web`'s description is read by Fusion's and LingDraft's models: English, no product-specific strategy,
+  no other tool names, no current year
 - No cross-imports between providers
 - Paid upstream calls are capped per day by `PROVIDER_DAILY_LIMITS`; never bypass `registry` (that would skip the budget)
 

@@ -43,6 +43,7 @@ class FakeProvider:
 
 
 def _patch_route(monkeypatch, primary: FakeProvider, chain: list[FakeProvider]):
+    from app import searching
     from app.routes import search as search_route
 
     cached: list[str] = []
@@ -53,10 +54,10 @@ def _patch_route(monkeypatch, primary: FakeProvider, chain: list[FakeProvider]):
     async def record_cache(provider, _body, _result):
         cached.append(provider)
 
-    monkeypatch.setattr(search_route, "get_cached", no_cache)
-    monkeypatch.setattr(search_route, "set_cached", record_cache)
-    monkeypatch.setattr(search_route, "get_provider", lambda _name=None: primary)
-    monkeypatch.setattr(search_route, "get_fallback_providers", lambda _primary: [(p.name, p) for p in chain])
+    monkeypatch.setattr(searching, "get_cached", no_cache)
+    monkeypatch.setattr(searching, "set_cached", record_cache)
+    monkeypatch.setattr(searching, "get_provider", lambda _name=None: primary)
+    monkeypatch.setattr(searching, "get_fallback_providers", lambda _primary: [(p.name, p) for p in chain])
     return search_route, cached
 
 
@@ -142,7 +143,7 @@ async def test_primary_error_walks_chain_until_a_provider_succeeds(monkeypatch, 
     assert response.requested_provider == "deepseek"
     assert response.fallback_used is True
     assert response.provider_chain == ["deepseek", "firecrawl", "tavily"]
-    assert cached == ["tavily"]
+    assert cached == ["deepseek"]  # 记在请求的主 provider 名下：下次同样的请求读的就是这个键
     assert (primary.calls, firecrawl.calls, tavily.calls) == (1, 1, 1)
     assert fallback_stats == ["error"]
 

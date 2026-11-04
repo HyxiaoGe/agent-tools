@@ -223,15 +223,16 @@ def _http_request():
 
 
 def _patch_route(monkeypatch, primary, fallback_name, fallback):
+    from app import searching
     from app.routes import search as search_route
 
     async def no_cache(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(search_route, "get_cached", no_cache)
-    monkeypatch.setattr(search_route, "set_cached", no_cache)
-    monkeypatch.setattr(search_route, "get_provider", lambda _name=None: primary)
-    monkeypatch.setattr(search_route, "get_fallback_providers", lambda _primary: [(fallback_name, fallback)])
+    monkeypatch.setattr(searching, "get_cached", no_cache)
+    monkeypatch.setattr(searching, "set_cached", no_cache)
+    monkeypatch.setattr(searching, "get_provider", lambda _name=None: primary)
+    monkeypatch.setattr(searching, "get_fallback_providers", lambda _primary: [(fallback_name, fallback)])
     return search_route
 
 
