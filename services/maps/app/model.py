@@ -1,7 +1,9 @@
 """两家共用的数据结构，和从上游 JSON 取值、比较地名的小函数。
 
-取值照 Fusion（app/services/mcp/amap_product_tools.py）：只按明确的字段取，类型不对就当没有（高德的空值是 []），
-数字只收非负的，文字里像密钥的整条不要。地名比较也照 Fusion：只留数字、字母、汉字再比，城市去掉“市”“地区”等后缀。
+取值照 Fusion（app/services/mcp/amap_product_tools.py）：只按明确的字段取，类型不对就当没有
+（录的样本里高德的空值是 []），数字只收非负的。
+文字里像密钥的整条不要（Fusion 是把那段换成 [REDACTED]、其余照留，这里更严）。
+地名比较也照 Fusion：只留数字、字母、汉字再比，城市去掉“市”“地区”等后缀。
 坐标只在服务里用（算周边、算路线、给模型判断重名），不放进地点和路线结果（Fusion 0909d20f）。
 两家都是 GCJ-02，同一次调用里可以混用；高德写“经度,纬度”，腾讯写“纬度,经度”，只在各自的客户端里换顺序。
 """
@@ -19,7 +21,8 @@ TMAP = "tmap"
 
 COORDINATES = re.compile(r"^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*$")
 _SECRET_VALUE = r'"(?:\\.|[^"\\])+"|\'(?:\\.|[^\'\\])+\'|[a-z0-9._~+/=-]{4,}'
-# 参数里有这种写法就不发给上游；上游文字里有就整条不要（Fusion APT:105-112）
+# 写法照 Fusion APT:105-112。参数里有就不发给上游（同 Fusion APT:1339）；
+# 上游文字里有就整条不要（Fusion 是换成 [REDACTED]）
 SECRET = re.compile(
     rf"\b(?:api[ _-]*key|client[ _-]*secret|password|access[ _-]*token|token|cookie|session[ _-]*id)\s*[:=]\s*"
     rf"(?:{_SECRET_VALUE})"

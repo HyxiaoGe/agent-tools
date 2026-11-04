@@ -175,7 +175,7 @@ def _metrics(raw: dict) -> tuple[int | None, int | None]:
 
 
 def parse_transit_legs(segments: Any) -> list[Leg]:
-    """每段依次是步行、公交 / 地铁、铁路；空的段高德给 []（Fusion APT:1933-1989）。"""
+    """每段依次是步行、公交 / 地铁、铁路（Fusion APT:1933-1989）；没坐车的段高德给 buslines: []（录的样本里看到的）。"""
     if not isinstance(segments, list):
         return []
     legs: list[Leg] = []
