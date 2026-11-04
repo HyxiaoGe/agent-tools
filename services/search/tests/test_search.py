@@ -103,6 +103,7 @@ async def test_cached_response_clears_credits_used(monkeypatch):
 async def test_search_route_marks_fallback_provider_provenance(monkeypatch):
     from starlette.requests import Request
 
+    from app import searching
     from app.routes import search as search_route
 
     class Provider:
@@ -139,11 +140,11 @@ async def test_search_route_marks_fallback_provider_provenance(monkeypatch):
     async def fake_set_cached(*args):
         cached_calls.append(args)
 
-    monkeypatch.setattr(search_route, "get_cached", fake_get_cached)
-    monkeypatch.setattr(search_route, "set_cached", fake_set_cached)
-    monkeypatch.setattr(search_route, "get_provider", lambda _name=None: Provider(primary_response))
+    monkeypatch.setattr(searching, "get_cached", fake_get_cached)
+    monkeypatch.setattr(searching, "set_cached", fake_set_cached)
+    monkeypatch.setattr(searching, "get_provider", lambda _name=None: Provider(primary_response))
     monkeypatch.setattr(
-        search_route,
+        searching,
         "get_fallback_providers",
         lambda _primary: [("tavily", Provider(fallback_response))],
     )
@@ -169,12 +170,13 @@ async def test_search_route_marks_fallback_provider_provenance(monkeypatch):
     assert response.result_provider == "tavily"
     assert response.fallback_used is True
     assert response.provider_chain == ["brave", "tavily"]
-    assert cached_calls[0][0] == "tavily"
+    assert cached_calls[0][0] == "brave"  # 记在请求的主 provider 名下：下次同样的请求读的就是这个键
 
 
 async def test_search_route_records_firecrawl_credits_from_primary_response(monkeypatch):
     from starlette.requests import Request
 
+    from app import searching
     from app.routes import search as search_route
 
     class Provider:
@@ -202,10 +204,10 @@ async def test_search_route_records_firecrawl_credits_from_primary_response(monk
         def add_task(self, fn, *args):
             scheduled.append((fn, args))
 
-    monkeypatch.setattr(search_route, "get_cached", fake_get_cached)
-    monkeypatch.setattr(search_route, "set_cached", fake_set_cached)
-    monkeypatch.setattr(search_route, "get_provider", lambda _name=None: Provider())
-    monkeypatch.setattr(search_route, "get_fallback_providers", lambda _primary: [])
+    monkeypatch.setattr(searching, "get_cached", fake_get_cached)
+    monkeypatch.setattr(searching, "set_cached", fake_set_cached)
+    monkeypatch.setattr(searching, "get_provider", lambda _name=None: Provider())
+    monkeypatch.setattr(searching, "get_fallback_providers", lambda _primary: [])
 
     request = Request(
         {
@@ -230,6 +232,7 @@ async def test_search_route_records_firecrawl_credits_from_primary_response(monk
 async def test_search_route_records_firecrawl_credits_even_when_later_fallback_wins(monkeypatch):
     from starlette.requests import Request
 
+    from app import searching
     from app.routes import search as search_route
 
     class Provider:
@@ -269,11 +272,11 @@ async def test_search_route_records_firecrawl_credits_even_when_later_fallback_w
         def add_task(self, fn, *args):
             scheduled.append((fn, args))
 
-    monkeypatch.setattr(search_route, "get_cached", fake_get_cached)
-    monkeypatch.setattr(search_route, "set_cached", fake_set_cached)
-    monkeypatch.setattr(search_route, "get_provider", lambda _name=None: Provider(primary_response))
+    monkeypatch.setattr(searching, "get_cached", fake_get_cached)
+    monkeypatch.setattr(searching, "set_cached", fake_set_cached)
+    monkeypatch.setattr(searching, "get_provider", lambda _name=None: Provider(primary_response))
     monkeypatch.setattr(
-        search_route,
+        searching,
         "get_fallback_providers",
         lambda _primary: [("brave", Provider(fallback_response))],
     )
@@ -301,6 +304,7 @@ async def test_search_route_records_firecrawl_credits_even_when_later_fallback_w
 async def test_search_route_uses_fallback_when_primary_provider_raises(monkeypatch):
     from starlette.requests import Request
 
+    from app import searching
     from app.routes import search as search_route
 
     class Provider:
@@ -338,13 +342,11 @@ async def test_search_route_uses_fallback_when_primary_provider_raises(monkeypat
         def add_task(self, fn, *args):
             scheduled.append((fn, args))
 
-    monkeypatch.setattr(search_route, "get_cached", fake_get_cached)
-    monkeypatch.setattr(search_route, "set_cached", fake_set_cached)
+    monkeypatch.setattr(searching, "get_cached", fake_get_cached)
+    monkeypatch.setattr(searching, "set_cached", fake_set_cached)
+    monkeypatch.setattr(searching, "get_provider", lambda _name=None: Provider(error=TimeoutError("primary timeout")))
     monkeypatch.setattr(
-        search_route, "get_provider", lambda _name=None: Provider(error=TimeoutError("primary timeout"))
-    )
-    monkeypatch.setattr(
-        search_route,
+        searching,
         "get_fallback_providers",
         lambda _primary: [("brave", Provider(fallback_response))],
     )
@@ -370,13 +372,14 @@ async def test_search_route_uses_fallback_when_primary_provider_raises(monkeypat
     assert response.result_provider == "brave"
     assert response.fallback_used is True
     assert response.provider_chain == ["firecrawl", "brave"]
-    assert cached_calls[0][0] == "brave"
+    assert cached_calls[0][0] == "firecrawl"  # 记在请求的主 provider 名下：下次同样的请求读的就是这个键
     assert scheduled == []
 
 
 async def test_search_route_skips_cache_for_relaxed_freshness_results(monkeypatch):
     from starlette.requests import Request
 
+    from app import searching
     from app.routes import search as search_route
 
     class Provider:
@@ -400,10 +403,10 @@ async def test_search_route_skips_cache_for_relaxed_freshness_results(monkeypatc
     async def fake_set_cached(*args):
         cached_calls.append(args)
 
-    monkeypatch.setattr(search_route, "get_cached", fake_get_cached)
-    monkeypatch.setattr(search_route, "set_cached", fake_set_cached)
-    monkeypatch.setattr(search_route, "get_provider", lambda _name=None: Provider())
-    monkeypatch.setattr(search_route, "get_fallback_providers", lambda _primary: [])
+    monkeypatch.setattr(searching, "get_cached", fake_get_cached)
+    monkeypatch.setattr(searching, "set_cached", fake_set_cached)
+    monkeypatch.setattr(searching, "get_provider", lambda _name=None: Provider())
+    monkeypatch.setattr(searching, "get_fallback_providers", lambda _primary: [])
 
     request = Request(
         {
@@ -428,6 +431,7 @@ async def test_search_route_skips_cache_for_relaxed_freshness_results(monkeypatc
 async def test_search_route_does_not_fallback_when_relaxed_firecrawl_results_are_sufficient(monkeypatch):
     from starlette.requests import Request
 
+    from app import searching
     from app.routes import search as search_route
 
     class Provider:
@@ -457,10 +461,10 @@ async def test_search_route_does_not_fallback_when_relaxed_firecrawl_results_are
         fallback_calls.append(primary)
         return []
 
-    monkeypatch.setattr(search_route, "get_cached", fake_get_cached)
-    monkeypatch.setattr(search_route, "set_cached", fake_set_cached)
-    monkeypatch.setattr(search_route, "get_provider", lambda _name=None: Provider())
-    monkeypatch.setattr(search_route, "get_fallback_providers", fake_get_fallback_providers)
+    monkeypatch.setattr(searching, "get_cached", fake_get_cached)
+    monkeypatch.setattr(searching, "set_cached", fake_set_cached)
+    monkeypatch.setattr(searching, "get_provider", lambda _name=None: Provider())
+    monkeypatch.setattr(searching, "get_fallback_providers", fake_get_fallback_providers)
 
     request = Request(
         {

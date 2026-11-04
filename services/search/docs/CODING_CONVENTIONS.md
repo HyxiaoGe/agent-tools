@@ -24,7 +24,7 @@
 - Providers implement the `SearchProvider` Protocol -- no base class inheritance
 - New providers: add to `app/providers/`, register in `registry.py`
 - Routes must use `registry.get_provider()`, never instantiate providers directly
-- MCP tools must not import from routes
+- MCP tools must not import from routes; they call `app.searching.run_search`
 - No cross-imports between provider implementations
 - Tests in `tests/`, using pytest + pytest-asyncio
 
@@ -37,7 +37,7 @@
 
 ## Error Handling
 - Provider errors: let httpx exceptions propagate (FastAPI returns 500)
-- Fallback logic in route layer, not provider layer
+- Fallback logic in `app/searching.py` (shared by REST and MCP), not in providers
 - Cache failures: log warning, continue without cache
 
 ## Adding a New Provider

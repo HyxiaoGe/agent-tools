@@ -14,12 +14,12 @@ def _no_real_redis(monkeypatch):
 @pytest.fixture(autouse=True)
 def fallback_stats(monkeypatch):
     # 路由转备用时会写 Redis 计数；测试里统一记到列表，需要断言的测试直接请求这个 fixture。
-    from app.routes import search as search_route
+    from app import searching
 
     recorded: list[str] = []
 
     async def fake_record_fallback(reason: str) -> None:
         recorded.append(reason)
 
-    monkeypatch.setattr(search_route, "record_fallback", fake_record_fallback)
+    monkeypatch.setattr(searching, "record_fallback", fake_record_fallback)
     return recorded

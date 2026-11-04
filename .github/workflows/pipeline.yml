@@ -419,6 +419,9 @@ jobs:
           echo "search-service did not become healthy within 60s"
           docker logs --tail 50 search-service
           exit 1
+      - name: MCP smoke
+        # 经无状态 /mcp 列工具、试一次参数检查和一次真实搜索（最多占主 provider 一个名额）。
+        run: docker exec -i search-service python - < "$DEPLOY_DIR/services/search/scripts/smoke_search.py"
       - name: Push deploy metrics
         if: always()
         run: timeout 15s bash ~/scripts/push-deploy-metrics.sh search-service main "${{ job.status }}" "${{ env.BUILD_START }}" || echo "deploy metrics push failed, ignored"

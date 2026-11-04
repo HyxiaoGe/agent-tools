@@ -1,11 +1,22 @@
+"""搜索服务的 MCP（/mcp，无状态，和 weather 一样）。
+
+- search_web：给产品的模型用的工具，见 app.mcp.search_web。
+- search、search_news、search_images：早先的原样透传工具，返回整份 SearchResponse。现在也走 app.searching
+  （有备用链，不再把 0 条、放宽时效的结果写进和 REST 共用的缓存）。
+"""
+
 from fastmcp import FastMCP
 
-from app.cache import get_cached, set_cached
-from app.config import settings
+from app.mcp import search_web
 from app.models import SearchRequest, SearchType
-from app.providers.registry import get_provider
+from app.searching import SearchFailed, run_search
+from app.usage import record_search_credits
 
-mcp = FastMCP("search", instructions="Search the web using configured providers")
+mcp = FastMCP(
+    "search",
+    instructions="search_web searches the web and returns candidate sources; see the tool description.",
+)
+search_web.register(mcp)
 
 
 @mcp.tool()
@@ -16,22 +27,15 @@ async def search(
     freshness: str | None = None,
 ) -> dict:
     """Search the web using the configured provider."""
-    search_type = SearchType(type)
-    req = SearchRequest(query=query, type=search_type, count=count, freshness=freshness)
-    provider = get_provider()
-    provider_name = settings.SEARCH_PROVIDER
-
-    cached = await get_cached(provider_name, req)
-    if cached:
-        return cached.model_dump()
-
-    result = await provider.search(req)
-    result.provider = result.provider or provider_name
-    result.requested_provider = provider_name
-    result.result_provider = result.provider
-    result.provider_chain = [provider_name]
-    await set_cached(result.result_provider, req, result)
-    return result.model_dump()
+    req = SearchRequest(query=query, type=SearchType(type), count=count, freshness=freshness)
+    try:
+        outcome = await run_search(req)
+    except SearchFailed as e:
+        # 抛回主 provider 的原异常（状态码照旧）；from None：它和 SearchFailed 互为 cause 会成环
+        raise e.primary from None
+    for provider, credits_used in outcome.credits:
+        await record_search_credits(provider, credits_used)
+    return outcome.response.model_dump()
 
 
 @mcp.tool()

@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_API_URL: str = "https://api.deepseek.com"
 
+    # 一次搜索（主 provider 加备用链）最多用这么久：网关转发 search 限 30 秒，各家超时串行累加会超过它
+    SEARCH_DEADLINE_SECONDS: float = 25.0
+
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
 

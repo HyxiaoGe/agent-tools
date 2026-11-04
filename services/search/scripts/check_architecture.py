@@ -25,7 +25,18 @@ RULES: list[dict] = [
     {
         "name": "mcp must not import routes",
         "files": "app/mcp/**/*.py",
-        "forbidden": ["app.routes"],
+        "forbidden": [
+            "app.routes",
+            "app.providers.brave",
+            "app.providers.tavily",
+            "app.providers.firecrawl",
+            "app.providers.deepseek",
+        ],
+    },
+    {
+        "name": "search flow must not import routes or mcp",
+        "files": "app/searching.py",
+        "forbidden": ["app.routes", "app.mcp"],
     },
     {
         "name": "routes must not import provider classes directly",

@@ -12,7 +12,8 @@ from app.logger import setup_logging
 from app.mcp.server import mcp
 from app.routes import admin, search
 
-mcp_app = mcp.http_app()
+# 无状态（和 weather 一样）：每次调用一个 POST，不用记会话，服务重启也不影响调用方
+mcp_app = mcp.http_app(path="/mcp", stateless_http=True)
 
 
 @asynccontextmanager

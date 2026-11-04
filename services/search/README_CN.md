@@ -66,11 +66,14 @@ curl -X POST http://localhost:8080/search \
 
 ## MCP Server
 
-服务在 `/mcp` 暴露 MCP 工具，供 AI Agent 使用：
+服务在 `/mcp` 暴露 MCP 工具（无状态：一次调用一个 POST，不用会话），经网关是 `/search/mcp`：
 
-- `search` — 通用搜索（web/news/image）
+- `search_web` — 给产品的模型用：`query`、`count`（1-20，默认 10）、`recency_days`（1-365，向上取到 1/7/31/365 天）、`domains`（最多 5 个裸域名，结果按它过滤）。返回去重后的 `title` / `url` / `snippet`（最多 1000 字）/ `published_at`；失败是 `{ok: false, error: {code, message, retryable}}`（`bad_arguments`、`quota_exhausted`、`timeout`、`rate_limited`、`upstream_error`、`not_configured`）。模型看到的文字是去掉 `meta`（provider 链）的 JSON，`structuredContent` 是整份
+- `search` — 通用搜索（web/news/image，返回整份 `SearchResponse`）
 - `search_news` — 新闻搜索快捷方式
 - `search_images` — 图片搜索快捷方式
+
+所有工具和 REST 共用备用链、缓存和每日额度。
 
 Claude Code 集成配置：
 
@@ -100,6 +103,7 @@ Claude Code 集成配置：
 | `DEEPSEEK_API_KEY` | — | DeepSeek 搜索 API 密钥 |
 | `DEEPSEEK_API_URL` | `https://api.deepseek.com` | DeepSeek API 基础地址 |
 | `REDIS_URL` | `redis://search-redis:6379` | Redis 连接地址（docker compose 固定为自带的 search-redis） |
+| `SEARCH_DEADLINE_SECONDS` | `25` | 一次搜索（主 provider 加备用链）的总时限，过了就不再试后面的备用；比网关的 30 秒短 |
 | `CACHE_TTL_WEB` | `600` | Web 搜索缓存时间（秒） |
 | `CACHE_TTL_NEWS` | `300` | 新闻搜索缓存时间（秒） |
 | `RATE_LIMIT_GLOBAL` | `40/second` | 全局限流 |
