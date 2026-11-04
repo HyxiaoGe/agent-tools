@@ -208,16 +208,16 @@ class ReadPageToolTests(unittest.IsolatedAsyncioTestCase):
     async def _call(self, **args):
         async with Client(mcp_server.build_mcp(self.read)) as client:
             result = await client.call_tool_mcp(mcp_server.TOOL_NAME, args)
-        return result.content[0].text, result.structuredContent, result.isError
+        return result.content[0].text, result.structured_content, result.is_error
 
     async def test_tool_is_listed_with_description(self):
         async with Client(mcp_server.build_mcp(self.read)) as client:
             tools = await client.list_tools()
         self.assertEqual([t.name for t in tools], ["read_page"])
         self.assertEqual(tools[0].description, mcp_server.DESCRIPTION)
-        self.assertEqual(set(tools[0].inputSchema["properties"]), {"url", "full_page"})
-        self.assertEqual(tools[0].inputSchema["required"], ["url"])
-        self.assertTrue(tools[0].annotations.readOnlyHint)
+        self.assertEqual(set(tools[0].input_schema["properties"]), {"url", "full_page"})
+        self.assertEqual(tools[0].input_schema["required"], ["url"])
+        self.assertTrue(tools[0].annotations.read_only_hint)
 
     async def test_success_strips_wrapper_and_hides_meta_from_model(self):
         text, data, is_error = await self._call(url="https://example.com/a#top")

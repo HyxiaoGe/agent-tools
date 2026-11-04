@@ -1,7 +1,7 @@
 """部署冒烟：在 reader-service 容器内经 MCP 读一次，确认无状态 /mcp 能用、网址检查和真实读取都正常。
 
 tools/list 看工具在不在、参数对不对；一次内网地址（url_safety 拦下，不打上游）；一次真实读取 example.com
-（和 REST 冒烟同一页，通常直连读到；直连没读到时最多占 Firecrawl、Tavily 各一次）。
+（和 REST 冒烟同一页。这页正文太短，直连会跳过，所以每次部署实际会占一次付费上游）。
 
 用法：docker exec -i reader-service python - < scripts/smoke_mcp.py
 """
