@@ -6,14 +6,17 @@
   这里改为工具错误，错误码和建议原样带回，调用方才能如实记为失败。
 - 上游 get_latest_news 取的不是最新一批（当天所有上过榜的标题、第一次上榜的名次），
   取数据的那一步换成 latest_news.py；参数校验、返回格式仍走上游的工具外层。
+- 只开放查询类工具。网关按服务放行、不分工具，上游的发通知、触发抓取这类工具不能交给调用方自己挡。
 """
 
+import asyncio
 import copy
 import json
 import os
 from datetime import datetime
 from typing import Any
 
+from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import Middleware
 from mcp_server import server as upstream
@@ -22,6 +25,33 @@ from mcp_server.utils.errors import DataNotFoundError
 from mcp_server.utils.validators import get_supported_platforms
 
 from latest_news import latest_news
+
+# 只开放这 16 个查询类工具，都只读 TrendRadar 抓下来的本地数据（分析类只用上游算权重的函数，不调模型、不联网）。
+# 上游另外 11 个：发通知、查通知渠道和格式（send_notification 等）、立刻抓取、从远程同步、经 r.jina.ai 读任意网页、
+# 看配置、系统和存储状态、查版本。网关只按服务放行，任何能调 trends 的产品都看得到、调得到，
+# 和抓取端共用一份配置，哪天配上推送渠道，send_notification 就真能往群里发。
+# 启动时删掉：不出现在列表里，点名调用回的是 Unknown tool，和不存在一样。上游升级加的新工具默认也不开放，
+# 要开放得先确认是只读的，再加进这里。
+QUERY_TOOLS = frozenset(
+    {
+        "resolve_date_range",
+        "get_latest_news",
+        "get_trending_topics",
+        "get_news_by_date",
+        "search_news",
+        "find_related_news",
+        "aggregate_news",
+        "analyze_topic_trend",
+        "analyze_data_insights",
+        "analyze_sentiment",
+        "compare_periods",
+        "generate_summary_report",
+        "get_latest_rss",
+        "search_rss",
+        "get_rss_feeds_status",
+        "list_available_dates",
+    }
+)
 
 # 取值与上游工具内部校验一致：data_query.py / search_tools.py / analytics.py。
 # 升级镜像版本时要重新核对。
@@ -88,6 +118,14 @@ def get_latest_news(
     return items
 
 
+async def keep_query_tools(server: FastMCP) -> list[str]:
+    """删掉不在 QUERY_TOOLS 里的工具，返回删掉的名字。"""
+    removed = sorted(set(await server.get_tools()) - QUERY_TOOLS)
+    for name in removed:
+        server.remove_tool(name)
+    return removed
+
+
 class TrendsContract(Middleware):
     async def on_list_tools(self, context, call_next):
         tools = await call_next(context)
@@ -106,5 +144,7 @@ class TrendsContract(Middleware):
 
 if __name__ == "__main__":
     DataService.get_latest_news = get_latest_news
+    removed = asyncio.run(keep_query_tools(upstream.mcp))
+    print(f"只开放查询类工具，去掉 {len(removed)} 个：{', '.join(removed)}", flush=True)
     upstream.mcp.add_middleware(TrendsContract())
     upstream.run_server(transport="http", host="0.0.0.0", port=int(os.environ.get("MCP_PORT", "3333")))

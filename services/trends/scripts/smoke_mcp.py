@@ -9,7 +9,7 @@ import sys
 import urllib.request
 
 URL = "http://localhost:3333/mcp"
-# Fusion 授权使用的查询类工具，缺一个都说明镜像版本和预期不符。
+# 常用的查询类工具（Fusion 每日灵感用 get_latest_news），缺一个都说明镜像版本和预期不符。
 REQUIRED_TOOLS = {
     "get_latest_news",
     "get_trending_topics",
@@ -17,6 +17,8 @@ REQUIRED_TOOLS = {
     "get_news_by_date",
     "list_available_dates",
 }
+# contract_server.py 只开放 16 个查询类工具，这几个有副作用或是运维用的，不该出现
+NOT_OPEN = {"send_notification", "trigger_crawl", "sync_from_remote", "read_article", "get_current_config"}
 
 
 def post(payload, session=None):
@@ -58,6 +60,8 @@ def main():
     missing = REQUIRED_TOOLS - names
     if missing:
         sys.exit(f"missing tools: {sorted(missing)}")
+    if len(names) != 16 or names & NOT_OPEN:
+        sys.exit(f"expected only the 16 query tools, got {len(names)}: {sorted(names & NOT_OPEN)}")
 
     schemas = {tool["name"]: tool["inputSchema"]["properties"] for tool in listed["result"]["tools"]}
     if "enum" not in schemas["search_news"]["sort_by"]:
@@ -89,7 +93,18 @@ def main():
     rejected, rejected_text = call(4, "get_news_by_date", {"date_range": "2020-01-01"})
     if not rejected:
         sys.exit(f"upstream error not marked isError: {rejected_text[:300]}")
-    print(f"ok: {len(names)} tools, get_latest_news returned {len(text)} chars, upstream errors marked isError")
+    # 不开放的工具点名调用也要被拒。拿只读的 get_system_status 试，不拿 send_notification：白名单失效时一试就真发了
+    blocked, _ = post(
+        {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "get_system_status", "arguments": {}}},
+        session,
+    )
+    outcome = json.dumps(blocked.get("error") or blocked.get("result"), ensure_ascii=False)
+    if "Unknown tool" not in outcome:
+        sys.exit(f"get_system_status should be unknown: {outcome[:300]}")
+    print(
+        f"ok: {len(names)} query tools, get_latest_news returned {len(text)} chars, "
+        "upstream errors marked isError, closed tools unknown"
+    )
 
 
 main()
