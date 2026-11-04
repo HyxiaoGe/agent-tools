@@ -1,9 +1,12 @@
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 
 from app.config import settings
 from app.models import SearchRequest, SearchResponse, SearchResultItem, SearchType
+
+BEIJING = ZoneInfo("Asia/Shanghai")
 
 # Brave 风格 freshness → DeepSeek after: 日期回溯天数
 FRESHNESS_DAYS = {
@@ -71,7 +74,24 @@ class DeepSeekProvider:
                     # summary 是给模型读的长摘要，作为正文摘要下发
                     content=r.get("summary") or snippet,
                     favicon=r.get("site_icon"),
-                    published_at=r.get("date"),
+                    published_at=self._published_at(r.get("date")),
                 )
             )
         return items
+
+    @staticmethod
+    def _published_at(value):
+        """DeepSeek 只给到天的北京日期，写成 UTC 是前一天 16:00（"2026-11-02T16:00:00+00:00" 是北京 11-03），
+        原样给出去模型会读成早一天（11-04 对了两篇网易文章）。正好是北京零点的只给那一天的日期，其余原样。"""
+        if not isinstance(value, str):
+            return value
+        try:
+            moment = datetime.fromisoformat(value.strip())
+        except ValueError:
+            return value
+        if moment.tzinfo is None:
+            return value
+        beijing = moment.astimezone(BEIJING)
+        if (beijing.hour, beijing.minute, beijing.second, beijing.microsecond) == (0, 0, 0, 0):
+            return beijing.date().isoformat()
+        return value

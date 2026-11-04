@@ -215,7 +215,8 @@ def published(value: Any) -> str | None:
 
     只精确到天的日期，上游常写成某个时区的零点。UTC 零点、北京时间零点的只给那一天的日期：
     DeepSeek 给的是北京日期换成 UTC（“2026-11-02T16:00:00+00:00”是北京 11-03），原样给模型会读成早一天
-    （11-04 对了两篇网易文章，页面上分别是 11-03、10-30）。
+    （11-04 对了两篇网易文章，页面上分别是 11-03、10-30）。DeepSeek 的 provider 现在已经换成北京日期，
+    这里留着兜缓存里的旧结果和别的上游。
     """
     if not isinstance(value, str) or not value.strip():
         return None
