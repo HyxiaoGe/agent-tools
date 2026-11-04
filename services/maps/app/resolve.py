@@ -1,9 +1,11 @@
 """地名怎么定到一个点：两家用同一套规则，照 Fusion（amap_product_tools.py 的 _resolve_geo、_select_* 几个函数）。
+第 2 步关键词兜底 Fusion 只用在路线的起终点（APT:864-904），查地点时 near 解析不出来直接失败
+（APT:557-559）；这里两处都兜底。
 
 1. 先看地名解析的候选（高德地址解析；腾讯输入提示里名字就是这个地名的，见 tmap.name_candidates）：
    只有一个，就用它（给了城市却对不上，当没解析出来）；有好几个，先按城市筛（没给城市时用起点的城市，Fusion APT:738）。
-   筛完还剩好几个，不替用户挑，回重名，带最多 5 个编号候选；模型带上编号再查就用那个（Fusion 84f79858、30efef77）。
-2. 解析不出来，改用关键词搜索兜底（Fusion 77a56962）：
+   筛完还剩好几个，不替用户挑，回重名，带最多 5 个编号候选；模型带上编号再查就用那个（Fusion c3bc81cb）。
+2. 解析不出来，改用关键词搜索兜底（Fusion 0909d20f；没城市那条是 77a56962，取多出来的字最少是 9685489a）：
    - 有城市：名字里含这个地名、城市对得上的，取多出来的字最少的那个，并列就不算；
      还定不下，取搜索结果里第一个名字含这个地名的，城市要对得上。
    - 没城市：只认名字和地名完全一样、地名里写了城市名、而且只有一个的。
@@ -66,7 +68,7 @@ def select_in_city(places: list[Place], *, label: str, city: str) -> Endpoint | 
         top = [place for score, place in scored if score == best]
         if len(top) == 1:
             return Endpoint(label, top[0].location, top[0].city)  # type: ignore[arg-type]
-    # 并列时照 Fusion：取搜索结果里第一个名字含这个地名的（Fusion 再查一次详情确认城市，这里搜索结果里就有）
+    # 挑不出唯一一个时照 Fusion：取搜索结果里第一个名字含这个地名的（Fusion 再查一次详情确认城市，这里搜索结果里就有）
     first = next((place for place in places if wanted in match_text(place.name)), None)
     if first is not None and first.location is not None and city_matches(city, first.city):
         return Endpoint(label, first.location, first.city)

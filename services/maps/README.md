@@ -6,7 +6,7 @@
 
 ## 为什么直接调 REST
 
-- 高德 MCP 搜索不给评分、人均消费、营业时间、图片，Fusion 只好逐条再查详情；REST 一次搜索就全有（`show_fields=business,photos`），10 条结果省 10 次请求。
+- 高德 MCP 搜索不给评分、人均消费、营业时间，Fusion 对前 3 条再查详情（APT:646），一次搜索占 4 次额度；REST 一次搜索就全有（`show_fields=business,photos`），省掉这 3 次。
 - 腾讯 MCP 回给人看的中文段落，各工具写法不一样；REST 是 JSON。
 - 两家都是 GCJ-02，同一次调用里可以混用（高德解析的起点 + 腾讯算的路线）。
 
@@ -71,7 +71,7 @@
 
 ## 地名怎么定
 
-两家一套规则，照 Fusion（见 `app/resolve.py`）：先看地名解析的候选，只有一个就用；好几个先按城市筛（终点没给城市用起点的城市），还剩好几个就回 `ambiguous_location`，带最多 5 个编号候选，模型带上编号再查。解析不出来再按关键词搜索，从结果里按名称挑。腾讯的地名解析用输入提示（一次 10 个带省市区），地址解析一次只回一个，看不出重名。
+两家一套规则，照 Fusion（见 `app/resolve.py`；关键词兜底 Fusion 只用在路线起终点，这里查地点的 near 也用）：先看地名解析的候选，只有一个就用；好几个先按城市筛（终点没给城市用起点的城市），还剩好几个就回 `ambiguous_location`，带最多 5 个编号候选，模型带上编号再查。解析不出来再按关键词搜索，从结果里按名称挑。腾讯的地名解析用输入提示（一次 10 个带省市区），地址解析一次只回一个，看不出重名。
 
 ## 当前位置
 
@@ -82,7 +82,7 @@
 `structuredContent` 是 `{"ok": false, "error": {"code", "message", "retryable", ...}}`，`isError` 为 false。给模型的文字：
 
 - `ambiguous_location`（`retryable: true`）：带 `candidate_argument` 和编号候选（城市、区、匹配级别或分类、坐标），说明四种情况怎么办；坐标只给模型自己判断。
-- `place_not_found`：找不到这个地名，能从对话补城市就再查，否则问用户。Fusion 这里报的是工具不可用，模型会说成服务出错。
+- `place_not_found`：找不到这个地名，能从对话补城市就再查，否则问用户。Fusion 这里报的是工具不可用。
 - `place_id_unresolved`：编号查不到，用搜索结果里的编号或改用地名。
 - `location_unavailable`：没有当前位置，问用户要地名。
 - `no_route`：几种方式都算不出（太远、没公交）。

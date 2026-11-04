@@ -7,8 +7,9 @@ MCP 的说明和给模型的文字在 mcp_server.py。
 - 能兜底：哪一次上游请求高德不行（额度用尽、超每秒上限、超时、连不上、出错、密钥无效），就只把这一次交给腾讯；
   上游拒了这次请求本身（参数不对、算不出路线）、查到 0 条、地名重名都不转。见 upstream.py。
 - 地名按编号查（place_id）时编号带服务商前缀；那一家用不了时按名字解析。
-- 地名查不到时回 place_not_found（Fusion 报的是工具不可用，模型会把它说成服务出错）。
-- 路线的几种出行方式并行算；整次调用限 25 秒，到时已经算出的路线照样返回。
+- 地名查不到时回 place_not_found（Fusion 报的是工具不可用，APT:559、889-903）。
+- 路线的几种出行方式并行算（Fusion 一个一个算，APT:751）。
+  整次调用限 25 秒、到时已算出的路线照样返回，这点和 Fusion 一样（APT:86、466-478）。
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ CURRENT = "current_location"
 NAMED = "named"
 NONE = "none"
 MODES = ("driving", "transit", "walking", "bicycling")
-# 当前位置在参数里的写法：只认这两个固定值（Fusion APT:1236-1243），不是按意思判断
+# 当前位置在参数里的写法：只认这两个固定值（Fusion APT:1239-1246），不是按意思判断
 CURRENT_LOCATION_TEXTS = frozenset({"current_location", "当前位置"})
 MAX_QUERY = 80
 MAX_CITY = 40
@@ -269,7 +270,7 @@ def parse_route_args(
     ):
         if (choice is not None or place_id is not None) and source != NAMED:
             raise _invalid(f"{side}_candidate and {side}_place_id are only for {side}_source=named")
-        # 编号已经指定了具体地点，不再和重名候选的编号同用（Fusion APT:1259-1263）
+        # 编号已经指定了具体地点，不再和重名候选的编号同用（Fusion APT:1255-1259）
         if choice is not None and place_id is not None:
             raise _invalid(f"do not combine {side}_place_id with {side}_candidate")
     if not isinstance(modes, list) or not 1 <= len(modes) <= 3 or any(m not in MODES for m in modes):
@@ -429,7 +430,7 @@ class _Call:
         return point
 
     async def reverse_city(self, point: Point) -> str | None:
-        """当前位置的城市只用来给高德算公交；拿不到也接着算（Fusion APT:783-798）。"""
+        """当前位置的城市：终点没给城市时按它挑同城的候选，也给高德算公交用；拿不到也接着算（Fusion APT:783-798）。"""
         try:
             _, city = await self.first(lambda c: c.reverse_city(point))
         except (UpstreamError, AllFailed):
