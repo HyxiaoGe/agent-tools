@@ -52,6 +52,8 @@ Response:
 }
 ```
 
+`published_at` is whatever the upstream gives, except DeepSeek: it only knows the Beijing date and writes it as UTC 16:00 of the day before, so that is returned as the date itself (`2026-11-03`), not a day early.
+
 ### Other Endpoints
 
 | Method | Path | Description |

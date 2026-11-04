@@ -85,3 +85,21 @@ async def test_deepseek_rejects_image_search_so_route_can_fall_back():
 
     with pytest.raises(ValueError):
         await DeepSeekProvider().search(SearchRequest(query="cat", type=SearchType.IMAGE))
+
+
+@pytest.mark.parametrize(
+    ("raw", "want"),
+    [
+        ("2026-11-02T16:00:00+00:00", "2026-11-03"),  # 北京 11-03 的零点写成了 UTC
+        ("2026-11-03T00:00:00+08:00", "2026-11-03"),
+        ("2026-06-01T00:00:00+00:00", "2026-06-01T00:00:00+00:00"),  # UTC 零点不是北京零点，原样
+        ("2026-11-02T16:30:00+00:00", "2026-11-02T16:30:00+00:00"),
+        ("2026-11-03T19:37:00", "2026-11-03T19:37:00"),  # 没时区的不换算
+        ("昨天", "昨天"),
+        (None, None),
+    ],
+)
+def test_deepseek_beijing_dates_are_not_a_day_early(raw, want):
+    from app.providers.deepseek import DeepSeekProvider
+
+    assert DeepSeekProvider._published_at(raw) == want
