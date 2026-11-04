@@ -365,7 +365,7 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
     def test_workflow_runs_explicit_tests_before_deploy(self):
         workflow = PIPELINE_WORKFLOW.read_text()
 
-        explicit_test_command = "python -m unittest -v test_main"
+        explicit_test_command = "python -m unittest -v test_main test_mcp"
         self.assertIn(explicit_test_command, workflow)
         self.assertNotIn("python -m unittest discover", workflow)
         self.assertLess(

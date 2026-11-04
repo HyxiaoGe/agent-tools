@@ -276,7 +276,7 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install -r requirements.txt
       - name: Run unit tests
-        run: python -m unittest -v test_main
+        run: python -m unittest -v test_main test_mcp
 
   publish:
     needs: [changes, check-gateway, check-image, check-search, check-reader, check-amap, check-context7, check-weather, check-flyai, check-tmap]
@@ -450,6 +450,9 @@ jobs:
           exit 1
       - name: Functional read smoke
         run: docker exec -i reader-service python - < "$DEPLOY_DIR/services/reader/scripts/smoke_read.py"
+      - name: MCP smoke
+        # 经无状态 /mcp 列工具、试一次内网地址（不打上游）和一次真实读取。
+        run: docker exec -i reader-service python - < "$DEPLOY_DIR/services/reader/scripts/smoke_mcp.py"
 
   deploy-trends:
     needs: [changes, sync, publish]

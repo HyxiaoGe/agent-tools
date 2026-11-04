@@ -34,7 +34,7 @@ flowchart LR
 | [gateway](gateway/README.md) | 统一入口：产品密钥鉴权、逐请求记账、按路径转发 | HTTP |
 | [image](services/image/README.md) | 多模型生图与改图，参考图、搜索增强、缓存与限流 | REST + MCP |
 | [search](services/search/README.md) | 网页 / 新闻 / 图片搜索，换搜索源只改配置 | REST + MCP |
-| [reader](services/reader/README.md) | 输入 URL 返回 Markdown 正文，读不到时给出结构化原因 | REST |
+| [reader](services/reader/README.md) | 输入 URL 返回 Markdown 正文，读不到时给出结构化原因；MCP 工具 `read_page` 另做网址检查和正文整理 | REST + MCP |
 | [trends](services/trends/README.md) | 国内热榜与 RSS 查询（TrendRadar），补齐上游工具契约 | MCP |
 | [amap](services/amap/README.md) | 高德地图：地理编码、地点搜索、路线规划（官方 MCP 的代理，服务端持有密钥、只放行只读工具） | MCP |
 | [context7](services/context7/README.md) | 技术文档：解析库 ID、查询最新文档（Context7 官方 MCP 的代理，服务端持有密钥、只放行文档工具） | MCP |

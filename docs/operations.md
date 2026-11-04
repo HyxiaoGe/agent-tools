@@ -7,7 +7,7 @@
 | `gateway` | agent-tools-gateway | 8100（仅本机；middleware_default 内按容器名访问；外部经 `agent-tools.dev.seanfield.org`） | 统一入口：产品密钥鉴权、调用记账、`/image` `/search` `/reader` `/trends` `/amap` `/context7` `/weather` `/flyai` `/tmap` 转发 |
 | `services/image` | image-service | 8090（host 网络） | 生图 / 改图，REST + MCP，产品密钥鉴权与用量记账 |
 | `services/search` | search-service | 8080（仅 agent-tools-internal） | 多搜索源统一检索，REST `/search` 和 MCP 工具 `search_web`（`/search/mcp`，无状态）共用备用链、缓存和每日额度；自带 `search-redis` 存缓存与 Firecrawl 每日用量 |
-| `services/reader` | reader-service | 8091（仅 agent-tools-internal） | 网页正文读取 |
+| `services/reader` | reader-service | 8091（仅 agent-tools-internal） | 网页正文读取，REST `/read` 和 MCP 工具 `read_page`（`/reader/mcp`，无状态）共用读取调度和每日额度 |
 | `services/trends` | trends-mcp | 3333（仅 agent-tools-internal） | TrendRadar 热榜 MCP（官方镜像转存，只读 dev 上 TrendRadar 的数据） |
 | `services/amap` | amap-mcp | 3334（仅 agent-tools-internal） | 高德官方 MCP 的代理：注入密钥、只读白名单、配额用尽标记；付费服务，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
 | `services/context7` | context7-mcp | 3335（仅 agent-tools-internal） | Context7 官方 MCP 的代理：注入密钥、文档工具白名单、限流标记；密钥按账号限流，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
