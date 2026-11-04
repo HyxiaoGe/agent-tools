@@ -42,7 +42,7 @@ flowchart LR
 | [amap](services/amap/README.md) | 高德地图：地理编码、地点搜索、路线规划（官方 MCP 的代理，服务端持有密钥、只放行只读工具） | MCP |
 | [context7](services/context7/README.md) | 技术文档：解析库 ID、查询最新文档（Context7 官方 MCP 的代理，服务端持有密钥、只放行文档工具） | MCP |
 | [weather](services/weather/README.md) | 天气：MCP 工具 `get_weather`（挑城市、按当地日期整理逐日和逐小时预报、缓存，Fusion 和灵稿共用）；原来的城市查询与预报 REST 接口保留（和风天气，服务端持有凭证签 JWT） | MCP + REST |
-| [flyai](services/flyai/README.md) | 航班 / 高铁查询：FlyAI 第三方 CLI 的隔离适配器，服务端持有 API Key，只开放两个查询接口并投影安全字段 | REST |
+| [flyai](services/flyai/README.md) | 航班 / 高铁查询：FlyAI 第三方 CLI 的隔离适配器，服务端持有 API Key；MCP 工具 `search_flights`、`search_trains`（参数规整、先筛后截、认不出的地名报错，Fusion 和灵稿共用），另有两个 REST 查询接口 | MCP、REST |
 | [tmap](services/tmap/README.md) | 腾讯地图：地点搜索、逆地址解析、路线与距离矩阵（官方 MCP 的代理，服务端持有密钥、只放行只读工具） | MCP |
 | [maps](services/maps/README.md) | 地图组合层：MCP 工具 `place_search`、`route_compare`（地名解析、重名、当前位置、整理结果，Fusion 和灵稿共用）；直接调高德、腾讯的 Web 服务，每次上游请求先高德，额度用尽或出错时转腾讯 | MCP |
 

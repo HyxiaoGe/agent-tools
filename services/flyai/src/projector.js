@@ -1,4 +1,7 @@
-const MAX_PROVIDER_ITEMS = 100;
+export const MAX_PROVIDER_ITEMS = 100;
+// 预订链接只放行飞猪的这几个主机；11-04 录的样本里 jumpUrl 全是 router.feizhu.com（短链跳转），
+// 原先只认 a.feizhu.com，链接全被丢掉。
+const BOOKING_HOSTS = new Set(["a.feizhu.com", "router.feizhu.com"]);
 const DIRECT_JOURNEY_TYPES = new Set([1, "1", "direct", "直达"]);
 const PLACE_SUFFIXES = ["国际机场", "高铁站", "火车站", "飞机场", "机场", "车站", "市", "站"];
 
@@ -14,11 +17,11 @@ function fail(code) {
   throw new ProviderResponseError(code);
 }
 
-function isRecord(value) {
+export function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function safeString(value, maxLength) {
+export function safeString(value, maxLength) {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   if (!normalized || normalized.length > maxLength || /[\u0000-\u001f\u007f]/u.test(normalized)) {
@@ -50,23 +53,21 @@ function placeCandidates(location) {
   const candidates = new Set([city, station, stationCode].filter(Boolean));
   if (city && station) {
     candidates.add(station.startsWith(city) ? station : `${city}${station}`);
+    // 上海虹桥站 → 也认“虹桥”；县级市的站挂在地级市下（昆山南站 / 苏州），也认“昆山南”“昆山”
+    // 剩下至少两个字才算（长沙南去掉长沙只剩“南”，不当地名）
+    if (station.startsWith(city) && station.length >= city.length + 2) candidates.add(station.slice(city.length));
+  }
+  if (station) {
+    const withoutDirection = station.match(/^(.{2,})(?:东|西|南|北)$/u)?.[1];
+    if (withoutDirection) candidates.add(withoutDirection);
   }
   if (city && stationCode) candidates.add(`${city}${stationCode}`);
   return candidates;
 }
 
-function placeMatches(requested, location) {
+export function placeMatches(requested, location) {
   const expected = normalizePlace(requested);
   return expected !== null && placeCandidates(location).has(expected);
-}
-
-function internallyConsistentLocation(location, kind) {
-  if (kind !== "train" || !/(?:高铁站|火车站|车站|站)$/u.test(location.station_name)) return true;
-  const city = normalizePlace(location.city);
-  const station = normalizePlace(location.station_name);
-  if (!city || !station || station === city || station.startsWith(city)) return true;
-  const cityPrefix = station.match(/^(.{2,})(?:东|西|南|北)$/u)?.[1];
-  return cityPrefix ? cityPrefix === city : true;
 }
 
 function validCalendarDate(year, month, day) {
@@ -123,7 +124,7 @@ function projectLocation(segment, prefix) {
   return result;
 }
 
-function projectDuration(value) {
+export function projectDuration(value) {
   if (Number.isInteger(value) && value > 0 && value <= 10_080) return value;
   const text = safeString(value, 40);
   if (!text) return null;
@@ -137,7 +138,7 @@ function projectDuration(value) {
   return minutes > 0 && minutes <= 10_080 ? minutes : null;
 }
 
-function projectPrice(value) {
+export function projectPrice(value) {
   let amount = value;
   if (isRecord(amount)) {
     amount = amount.amount ?? amount.value ?? amount.price;
@@ -153,14 +154,14 @@ function projectPrice(value) {
   return { currency: "CNY", amount_minor: amountMinor };
 }
 
-function projectBookingUrl(value) {
+export function projectBookingUrl(value) {
   const text = safeString(value, 2_048);
   if (!text) return null;
   try {
     const parsed = new URL(text);
     if (
       parsed.protocol !== "https:" ||
-      parsed.hostname.toLowerCase() !== "a.feizhu.com" ||
+      !BOOKING_HOSTS.has(parsed.hostname.toLowerCase()) ||
       parsed.username ||
       parsed.password ||
       (parsed.port && parsed.port !== "443")
@@ -174,7 +175,7 @@ function projectBookingUrl(value) {
   }
 }
 
-function normalizedClassName(value) {
+export function normalizedClassName(value) {
   const text = safeString(value, 80);
   return text?.normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/\s+/gu, "") ?? null;
 }
@@ -201,7 +202,7 @@ function satisfiesRequestConstraints(item, request, kind) {
   return true;
 }
 
-function sortItems(items, sortBy) {
+export function sortItems(items, sortBy) {
   if (sortBy === "recommended") return items;
   const indexed = items.map((item, index) => ({ item, index }));
   indexed.sort((left, right) => {
@@ -245,8 +246,6 @@ function projectItem(item, request, kind) {
     !departure ||
     !arrival ||
     !duration ||
-    !internallyConsistentLocation(departure, kind) ||
-    !internallyConsistentLocation(arrival, kind) ||
     !placeMatches(request.origin, departure) ||
     !placeMatches(request.destination, arrival) ||
     departure.scheduled_at.slice(0, 10) !== request.departure_date
@@ -272,7 +271,7 @@ function projectItem(item, request, kind) {
   return result;
 }
 
-function extractItemList(payload) {
+export function extractItemList(payload) {
   if (!isRecord(payload) || !("status" in payload)) fail("invalid_provider_response");
   if (payload.status !== 0) fail("provider_error");
   if (!isRecord(payload.data) || !Array.isArray(payload.data.itemList)) {

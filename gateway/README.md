@@ -72,6 +72,7 @@ docker exec agent-tools-gateway python -m app.usage_report --app-id fusion --day
 - 总调用 / 失败次数（附前一天总量），按服务（含 MCP 工具前 3）和按产品的调用量。用量过半或有拦截的服务会附上每日上限和被拦下的次数。MCP 的握手消息（initialize、tools/list、SSE）不算调用，只统计 `tools/call` 和 REST 请求。
 - search 实际调了哪家上游、被额度拦下次数、转备用次数和 Firecrawl 剩余 credits：网关看不到这些，向 search 的 `/usage/daily` 拉取。
 - image、reader 各上游的调用 / 每日上限 / 被拦次数：向 image 的 `/v1/quota`、reader 的 `/usage/daily` 拉取。只列有调用或被拦的上游；某个服务当天没被调用也没有上游计数时不出这一行，拉取失败时写「获取失败」，不影响其余部分。
+- maps 每家地图服务的请求 / 失败和转腾讯次数、flyai 启动 CLI 的次数 / 失败（按原因）：向它们的 `/usage/daily` 拉取，规则同上。
 
 哪天已发送记在 `DAILY_REPORT_STATE_PATH`（默认 `storage/daily_report_state.json`），重启不重发；发送失败每天最多尝试 3 次。手动执行：
 

@@ -26,12 +26,15 @@ FROM node:22.22.0-bookworm-slim AS production
 ENV NODE_ENV=production \
     HOME=/tmp/flyai-home \
     HOST=0.0.0.0 \
-    PORT=8093
+    PORT=8093 \
+    FLYAI_STATE_DIR=/var/lib/flyai
 
 WORKDIR /app
 COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json ./package.json
 COPY --chown=node:node src ./src
+# 状态目录（设备标识、每日计数）：compose 在这里挂命名卷，第一次挂载时卷沿用这里的属主
+RUN mkdir -p /var/lib/flyai && chown node:node /var/lib/flyai && chmod 700 /var/lib/flyai
 
 USER node
 EXPOSE 8093

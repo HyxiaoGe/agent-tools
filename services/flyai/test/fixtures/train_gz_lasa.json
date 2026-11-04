@@ -1,0 +1,51 @@
+{
+ "data": {
+  "itemList": [
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "540100",
+        "arrCityName": "拉萨",
+        "arrDateTime": "2026-11-14 14:53:00",
+        "arrStationCode": "LSO",
+        "arrStationName": "拉萨站",
+        "arrStationShortName": "拉萨",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周六",
+        "depCityAbroad": null,
+        "depCityCode": "440100",
+        "depCityName": "广州",
+        "depDateTime": "2026-11-12 09:26:00",
+        "depStationCode": "GBA",
+        "depStationName": "广州白云站",
+        "depStationShortName": "广州白云",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "3207",
+        "marketingTransportName": "普快",
+        "marketingTransportNo": "Z264",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "硬座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "3207",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_gz_lasa/1",
+    "price": "447.00",
+    "totalDuration": "3207"
+   }
+  ]
+ },
+ "message": "success",
+ "status": 0,
+ "systemMessage": null
+}

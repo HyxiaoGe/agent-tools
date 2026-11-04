@@ -1,14 +1,20 @@
 import { createHash } from "node:crypto";
 import http from "node:http";
 import path from "node:path";
+import process from "node:process";
 import { TextDecoder } from "node:util";
 
 import { runFlyaiCli } from "./flyai-runner.js";
+import { ConcurrencyGate } from "./gate.js";
+import { handleMcpRequest } from "./mcp.js";
 import { projectProviderResponse } from "./projector.js";
 import { buildCliInvocation, validateSearchRequest, validateUserScope } from "./schema.js";
 import { parseStrictJson } from "./strict-json.js";
+import { chinaToday } from "./travel.js";
+import { UsageCounter, isDay } from "./usage.js";
 
 const MAX_REQUEST_BYTES = 16 * 1024;
+const MAX_MCP_REQUEST_BYTES = 64 * 1024;
 const ERROR_STATUS = Object.freeze({
   not_found: 404,
   method_not_allowed: 405,
@@ -31,26 +37,6 @@ const REJECTED_BEFORE_PROVIDER = new Set([
   "concurrency_limited",
   "credential_unavailable",
 ]);
-
-class ConcurrencyGate {
-  constructor(globalLimit = 2) {
-    this.globalLimit = globalLimit;
-    this.activeGlobal = 0;
-    this.activeUsers = new Set();
-  }
-
-  tryAcquire(userScope) {
-    if (this.activeUsers.has(userScope) || this.activeGlobal >= this.globalLimit) return false;
-    this.activeGlobal += 1;
-    this.activeUsers.add(userScope);
-    return true;
-  }
-
-  release(userScope) {
-    if (!this.activeUsers.delete(userScope)) return;
-    this.activeGlobal = Math.max(0, this.activeGlobal - 1);
-  }
-}
 
 // 并发隔离的 scope 来自网关重写后的产品 / 用户头：同一用户同时只跑一个 CLI 进程。
 // 只保留不可逆摘要，用户标识不进入内存以外的任何地方。
@@ -124,6 +110,10 @@ export function createAdapterServer({
   runnerOptions = {},
   clock = () => new Date(),
   homeDir = "/tmp",
+  deviceId,
+  usage = new UsageCounter({ clock }),
+  mcpQueueTimeoutMs,
+  log = (line) => process.stderr.write(`${line}\n`),
 } = {}) {
   if (typeof apiKey !== "string" || !apiKey.trim()) {
     throw new Error("FLYAI_API_KEY 必须配置");
@@ -132,8 +122,9 @@ export function createAdapterServer({
     throw new Error("FlyAI HOME 必须是绝对路径");
   }
 
+  // REST 和 MCP 共用一个闸门和一份计数
   const gate = new ConcurrencyGate(2);
-  const execute =
+  const runCli =
     runner ??
     (({ command, argv, signal }) =>
       runFlyaiCli({
@@ -143,7 +134,18 @@ export function createAdapterServer({
         signal,
         apiKey,
         homeDir,
+        deviceId,
       }));
+  const execute = async (invocation) => {
+    try {
+      const payload = await runCli(invocation);
+      usage.record(null);
+      return payload;
+    } catch (error) {
+      usage.record(error?.code ?? "internal_error");
+      throw error;
+    }
+  };
 
   const server = http.createServer(async (request, response) => {
     let parsedUrl;
@@ -164,6 +166,50 @@ export function createAdapterServer({
         return;
       }
       sendJson(response, 200, { status: "healthy" });
+      return;
+    }
+
+    if (parsedUrl.pathname === "/usage/daily") {
+      if (request.method !== "GET") {
+        sendError(response, "method_not_allowed");
+        return;
+      }
+      const day = parsedUrl.searchParams.get("day") ?? chinaToday(clock());
+      if (!isDay(day) || [...parsedUrl.searchParams.keys()].some((key) => key !== "day")) {
+        sendError(response, "invalid_request");
+        return;
+      }
+      sendJson(response, 200, usage.summary(day));
+      return;
+    }
+
+    if (parsedUrl.pathname === "/mcp") {
+      // 无状态：没有 SSE 流和会话可取、可删
+      if (request.method !== "POST") {
+        sendError(response, "method_not_allowed");
+        return;
+      }
+      // 请求体由 SDK 自己读，先按长度挡掉过大的（网关转发时带 content-length）
+      const contentLength = Number(request.headers["content-length"]);
+      if (!Number.isSafeInteger(contentLength) || contentLength < 0 || contentLength > MAX_MCP_REQUEST_BYTES) {
+        sendError(response, "invalid_request");
+        return;
+      }
+      let scope;
+      try {
+        scope = resolveUserScope(request.headers);
+      } catch {
+        sendError(response, "invalid_request");
+        return;
+      }
+      try {
+        await handleMcpRequest(request, response, { gate, scope, execute, clock, log, queueTimeoutMs: mcpQueueTimeoutMs });
+      } catch (error) {
+        log(`flyai_mcp_request_failed ${error?.stack ?? error}`);
+        sendError(response, "internal_error");
+      } finally {
+        server.emit("flyai-request-settled");
+      }
       return;
     }
 

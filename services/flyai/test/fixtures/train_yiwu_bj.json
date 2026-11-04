@@ -1,0 +1,177 @@
+{
+ "data": {
+  "itemList": [
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "110100",
+        "arrCityName": "北京",
+        "arrDateTime": "2026-11-12 17:24:00",
+        "arrStationCode": "VNP",
+        "arrStationName": "北京南站",
+        "arrStationShortName": "北京南",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "330700",
+        "depCityName": "金华",
+        "depDateTime": "2026-11-12 10:48:00",
+        "depStationCode": "YWH",
+        "depStationName": "义乌站",
+        "depStationShortName": "义乌",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "396",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G812",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "396",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_yiwu_bj/1",
+    "price": "672.00",
+    "totalDuration": "396"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "110100",
+        "arrCityName": "北京",
+        "arrDateTime": "2026-11-12 19:19:00",
+        "arrStationCode": "VNP",
+        "arrStationName": "北京南站",
+        "arrStationShortName": "北京南",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "330700",
+        "depCityName": "金华",
+        "depDateTime": "2026-11-12 11:46:00",
+        "depStationCode": "YWH",
+        "depStationName": "义乌站",
+        "depStationShortName": "义乌",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "453",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G834",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "453",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_yiwu_bj/2",
+    "price": "670.00",
+    "totalDuration": "453"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "110100",
+        "arrCityName": "北京",
+        "arrDateTime": "2026-11-12 23:11:00",
+        "arrStationCode": "VNP",
+        "arrStationName": "北京南站",
+        "arrStationShortName": "北京南",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "330700",
+        "depCityName": "金华",
+        "depDateTime": "2026-11-12 13:30:00",
+        "depStationCode": "YWH",
+        "depStationName": "义乌站",
+        "depStationShortName": "义乌",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "581",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G2590",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "581",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_yiwu_bj/3",
+    "price": "704.00",
+    "totalDuration": "581"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "110100",
+        "arrCityName": "北京",
+        "arrDateTime": "2026-11-13 08:10:00",
+        "arrStationCode": "FTP",
+        "arrStationName": "北京丰台站",
+        "arrStationShortName": "北京丰台",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周五",
+        "depCityAbroad": null,
+        "depCityCode": "330700",
+        "depCityName": "金华",
+        "depDateTime": "2026-11-12 06:11:00",
+        "depStationCode": "YWH",
+        "depStationName": "义乌站",
+        "depStationShortName": "义乌",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "1559",
+        "marketingTransportName": "普快",
+        "marketingTransportNo": "K1276",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "硬座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "1559",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_yiwu_bj/4",
+    "price": "198.00",
+    "totalDuration": "1559"
+   }
+  ]
+ },
+ "message": "success",
+ "status": 0,
+ "systemMessage": null
+}

@@ -13,6 +13,9 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+    # 只放飞猪 CLI 的设备标识和每日调用计数，重启、重新部署不丢
+    volumes:
+      - flyai-state:/var/lib/flyai
     cap_drop:
       - ALL
     security_opt:
@@ -28,6 +31,9 @@ services:
     # 自身无鉴权，只在专用网络里，经网关 /flyai 访问；CLI 要访问公网的 FlyAI，网络不能是 internal。
     networks:
       - agent-tools
+
+volumes:
+  flyai-state:
 
 networks:
   agent-tools:
