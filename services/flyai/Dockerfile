@@ -9,11 +9,18 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev --ignore-scripts \
     && node -e "const p=require('./package-lock.json').packages['node_modules/@fly-ai/flyai-cli'];if(p.version!=='1.0.16'||p.integrity!=='sha512-Ksi06xvJSJcdhmfoDbpAnA84K4/pF+SkLsa5ZLvNruUc3e2EpoGaI6FcJXKTODvB/evprfy5pdRzW3lVazqfkA==')process.exit(1)"
 
+# 测试要 MCP 客户端（开发依赖），单独装一份，不进运行镜像
+FROM node:22.22.0-bookworm-slim AS test-dependencies
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts
+
 FROM node:22.22.0-bookworm-slim AS test
 
 ENV NODE_ENV=production
 WORKDIR /app
-COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
+COPY --from=test-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json ./package.json
 COPY --chown=node:node src ./src
 COPY --chown=node:node test ./test

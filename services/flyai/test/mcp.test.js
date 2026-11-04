@@ -10,8 +10,7 @@ import process from "node:process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
 import { runFlyaiCli } from "../src/flyai-runner.js";
 import { ConcurrencyGate } from "../src/gate.js";
@@ -52,8 +51,10 @@ async function stopServer(server) {
   await once(server, "close");
 }
 
-async function connect(url, headers = HEADERS) {
-  const client = new Client({ name: "test", version: "1.0.0" });
+// 默认按新协议（2026-07-28）连，和灵稿一样；legacy 是 2025 年那几版的 initialize 握手（Fusion 自己写的客户端、Claude Code）
+async function connect(url, { headers = HEADERS, era = "modern" } = {}) {
+  const versionNegotiation = era === "modern" ? { mode: { pin: "2026-07-28" } } : { mode: "legacy" };
+  const client = new Client({ name: "test", version: "1.0.0" }, { versionNegotiation });
   await client.connect(new StreamableHTTPClientTransport(new URL(`${url}/mcp`), { requestInit: { headers } }));
   return client;
 }
@@ -76,6 +77,14 @@ function argValue(argv, flag) {
 
 function rpc(method, params, id = 1) {
   return JSON.stringify({ jsonrpc: "2.0", id, method, params });
+}
+
+// 直接发的请求没有新协议的 _meta，走旧协议的无状态那一路，SDK 回一条 SSE 消息；新协议回 JSON。两种都取出 JSON-RPC 消息
+async function rpcBody(response) {
+  const text = await response.text();
+  if (!response.headers.get("content-type")?.includes("text/event-stream")) return JSON.parse(text);
+  const data = text.split("\n").find((line) => line.startsWith("data:"));
+  return JSON.parse(data.slice("data:".length));
 }
 
 async function rawPost(url, body) {
@@ -102,6 +111,27 @@ test("列出两个工具：说明是英文、只读，火车必须写明要不�
     assert.ok(train.inputSchema.required.includes("train_category"));
     assert.ok(!train.inputSchema.required.includes("seat_class"));
   });
+});
+
+test("新旧协议都接：新协议钉死 2026-07-28 也连得上（旧 SDK 回 400），旧协议照样 initialize、查得到", async () => {
+  const payload = await fixture("train_bj_hrb");
+  const { runner, calls } = fakeRunner(() => payload);
+  const started = await startServer({ runner });
+  const modern = await connect(started.url);
+  const legacy = await connect(started.url, { era: "legacy" });
+  try {
+    assert.equal(modern.getProtocolEra(), "modern");
+    assert.equal(legacy.getProtocolEra(), "legacy");
+    for (const client of [modern, legacy]) {
+      const result = await client.callTool({ name: "search_trains", arguments: { ...TRAIN_ARGS, train_category: "all" } });
+      assert.equal(result.structuredContent.ok, true);
+    }
+    assert.equal(calls.length, 2);
+  } finally {
+    await modern.close();
+    await legacy.close();
+    await stopServer(started.server);
+  }
 });
 
 test("握手和列工具都带 x-upstream-calls: 0，网关不计入每日上限", async () => {
@@ -307,13 +337,13 @@ test("过去的日期、起终点相同：不调飞猪，响应带 x-upstream-ca
     ]) {
       const response = await rawPost(started.url, rpc("tools/call", { name: "search_trains", arguments: args }));
       assert.equal(response.headers.get("x-upstream-calls"), "0");
-      const body = await response.json();
+      const body = await rpcBody(response);
       assert.equal(body.result.structuredContent.error.code, "invalid_arguments");
     }
     // 没过 schema 的由 SDK 回 isError
     const response = await rawPost(started.url, rpc("tools/call", { name: "search_trains", arguments: TRAIN_ARGS }));
     assert.equal(response.headers.get("x-upstream-calls"), "0");
-    assert.equal((await response.json()).result.isError, true);
+    assert.equal((await rpcBody(response)).result.isError, true);
     assert.equal(calls.length, 0);
   } finally {
     await stopServer(started.server);
@@ -333,10 +363,41 @@ test("调了飞猪的响应不带 x-upstream-calls；可选参数传 null 当作
       }),
     );
     assert.equal(response.headers.get("x-upstream-calls"), null);
-    assert.equal((await response.json()).result.structuredContent.ok, true);
+    assert.equal((await rpcBody(response)).result.structuredContent.ok, true);
     assert.equal(argValue(calls[0].argv, "--max-price"), undefined);
   } finally {
     await stopServer(started.server);
+  }
+});
+
+test("调用方断开：正在跑的 CLI 收到中止", async () => {
+  let started;
+  const running = new Promise((resolve) => {
+    started = resolve;
+  });
+  const { runner } = fakeRunner(
+    ({ signal }) =>
+      new Promise((_resolve, reject) => {
+        started();
+        signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      }),
+  );
+  const server = await startServer({ runner });
+  const aborted = new Promise((resolve) => server.server.once("flyai-request-settled", resolve));
+  const caller = new AbortController();
+  const request = fetch(`${server.url}/mcp`, {
+    method: "POST",
+    headers: { ...HEADERS, "content-type": "application/json", accept: "application/json, text/event-stream" },
+    body: rpc("tools/call", { name: "search_trains", arguments: { ...TRAIN_ARGS, train_category: "all" } }),
+    signal: caller.signal,
+  });
+  try {
+    await running;
+    caller.abort();
+    await assert.rejects(request);
+    await aborted; // CLI 被中止后这一次请求才收尾；没收到中止会一直挂着，测试超时
+  } finally {
+    await stopServer(server.server);
   }
 });
 
