@@ -183,6 +183,28 @@ jobs:
       - name: Tests
         run: ~/.local/bin/uv run --frozen pytest -q
 
+  check-trends:
+    # 镜像是上游的，这里只查自己写的契约层：latest_news.py 的单测和 ruff
+    needs: changes
+    if: needs.changes.outputs.trends == 'true'
+    runs-on: [self-hosted, dev-agent-tools]
+    defaults:
+      run:
+        working-directory: services/trends
+    env:
+      UV_PYTHON: /usr/bin/python3
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: ~/.local/bin/uv sync --frozen
+      - name: Ruff
+        run: |
+          ~/.local/bin/ruff check .
+          ~/.local/bin/ruff format --check .
+      - name: Tests
+        run: ~/.local/bin/uv run --frozen pytest -q
+
   check-flyai:
     needs: changes
     if: needs.changes.outputs.flyai == 'true'
@@ -306,7 +328,7 @@ jobs:
         run: ~/.local/bin/uv run --frozen pytest -q
 
   publish:
-    needs: [changes, check-gateway, check-image, check-search, check-reader, check-amap, check-context7, check-weather, check-flyai, check-tmap, check-maps]
+    needs: [changes, check-gateway, check-image, check-search, check-reader, check-trends, check-amap, check-context7, check-weather, check-flyai, check-tmap, check-maps]
     if: >-
       always() && github.event_name != 'pull_request' &&
       github.ref == 'refs/heads/main' &&
@@ -371,7 +393,7 @@ jobs:
 
   # 三个服务共用 dev 上的一份部署目录（.env 与生图存储不入库），先同步到本次提交再分别部署。
   sync:
-    needs: [changes, check-gateway, check-image, check-search, check-reader, check-amap, check-context7, check-weather, check-flyai, check-tmap, check-maps]
+    needs: [changes, check-gateway, check-image, check-search, check-reader, check-trends, check-amap, check-context7, check-weather, check-flyai, check-tmap, check-maps]
     if: >-
       always() && github.event_name != 'pull_request' &&
       github.ref == 'refs/heads/main' &&

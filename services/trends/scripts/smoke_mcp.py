@@ -1,5 +1,5 @@
 """部署冒烟：在 trends-mcp 容器内走一遍 MCP 握手，确认工具齐全、能读到 TrendRadar 的数据，
-且 contract_server.py 的契约生效（参数带可选值、上游出错标记为 isError）。
+且 contract_server.py 的契约生效（参数带可选值、上游出错标记为 isError、get_latest_news 取最新一批）。
 
 用法：docker exec -i trends-mcp python - < scripts/smoke_mcp.py
 """
@@ -26,9 +26,7 @@ def post(payload, session=None):
     }
     if session:
         headers["mcp-session-id"] = session
-    request = urllib.request.Request(
-        URL, data=json.dumps(payload).encode(), headers=headers, method="POST"
-    )
+    request = urllib.request.Request(URL, data=json.dumps(payload).encode(), headers=headers, method="POST")
     with urllib.request.urlopen(request, timeout=20) as response:
         body = response.read().decode()
         session = response.headers.get("mcp-session-id") or session
@@ -61,10 +59,7 @@ def main():
     if missing:
         sys.exit(f"missing tools: {sorted(missing)}")
 
-    schemas = {
-        tool["name"]: tool["inputSchema"]["properties"]
-        for tool in listed["result"]["tools"]
-    }
+    schemas = {tool["name"]: tool["inputSchema"]["properties"] for tool in listed["result"]["tools"]}
     if "enum" not in schemas["search_news"]["sort_by"]:
         sys.exit("contract not applied: search_news.sort_by has no enum")
 
@@ -76,21 +71,25 @@ def main():
             "params": {"name": name, "arguments": arguments},
         }
         result, _ = post(payload, session)
-        text = "".join(
-            item.get("text", "") for item in result["result"].get("content", [])
-        )
+        text = "".join(item.get("text", "") for item in result["result"].get("content", []))
         return bool(result["result"].get("isError")), text
 
-    is_error, text = call(3, "get_latest_news", {"limit": 3})
+    # 和 Fusion 每日灵感一样取 60 条。取的是最新一批，同一平台的名次就不会重复；
+    # 上游原来的实现取当天所有上过榜的、第一次上榜的名次，会有好几条“第 1”。
+    is_error, text = call(3, "get_latest_news", {"limit": 60})
     if is_error or not text:
         sys.exit(f"get_latest_news failed: {text[:300]}")
+    seen = set()
+    for item in json.loads(text)["data"]:
+        key = (item["platform"], item["rank"])
+        if key in seen:
+            sys.exit(f"get_latest_news is not the latest batch: {key} appears twice")
+        seen.add(key)
     # 参数合法但上游拒绝（超出 365 天）：必须标记为错误，而不是当成功返回。
     rejected, rejected_text = call(4, "get_news_by_date", {"date_range": "2020-01-01"})
     if not rejected:
         sys.exit(f"upstream error not marked isError: {rejected_text[:300]}")
-    print(
-        f"ok: {len(names)} tools, get_latest_news returned {len(text)} chars, upstream errors marked isError"
-    )
+    print(f"ok: {len(names)} tools, get_latest_news returned {len(text)} chars, upstream errors marked isError")
 
 
 main()

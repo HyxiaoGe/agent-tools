@@ -3,5 +3,5 @@
 # contract_server.py 里的可选值要按新版本上游校验重新核对。
 FROM wantcat/trendradar-mcp:4.1.1
 
-COPY contract_server.py /app/contract_server.py
+COPY contract_server.py latest_news.py /app/
 CMD ["python", "/app/contract_server.py"]
