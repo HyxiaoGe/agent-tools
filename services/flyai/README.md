@@ -18,6 +18,8 @@ FlyAI 航班 / 高铁查询的适配器：把第三方 CLI 包成两个只读 HT
 | 503 | `credential_unavailable` | 未配置 `FLYAI_API_KEY` |
 | 504 | `provider_timeout` | 供应商 CLI 超过 20 秒 |
 
+400、429、503 和 404 / 405 都在启动 CLI 之前返回，响应头带 `X-Upstream-Calls: 0`，网关据此不计入每日上限。
+
 ## 隔离
 
 - CLI 以子进程运行，`detached` 进程组，每次调用独立临时 HOME，结束即删除；超时或请求取消先 SIGTERM 再 SIGKILL。

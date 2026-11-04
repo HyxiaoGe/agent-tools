@@ -41,7 +41,7 @@ agent-tools 的统一入口。调用方只配一个地址和一把产品密钥�
 | 503 | `upstream_busy` | 该服务连接池已满且排队超过 `POOL_WAIT_SECONDS` |
 | 504 | `upstream_timeout` | 上游超过该服务的超时 |
 | 502 | `upstream_unreachable` | 连不上上游 |
-| 429 | `daily_limit_exceeded` | 该服务当天的调用已达每日上限，`Retry-After` 为距北京时间 0 点的秒数 |
+| 429 | `daily_limit_exceeded` | 该服务当天的调用已达每日上限（服务总上限或该产品的上限，`message` 里分得出），`Retry-After` 为距北京时间 0 点的秒数 |
 
 每个服务有独立的连接池和超时，某个服务堆积慢请求不会拖住其他服务。
 
@@ -51,8 +51,10 @@ agent-tools 的统一入口。调用方只配一个地址和一把产品密钥�
 
 - 默认 `search=2000,reader=1000,image=200,weather=1000,amap=1000,tmap=1000,maps=300,flyai=100`，约为 10-23 ~ 11-01 单日峰值的 5~25 倍（maps 是 11-04 新加的，暂定 300）；未列出的服务（免费的 trends、context7）不限，`0` 表示当天一律拒绝。写了不存在的服务名，网关起不来。
 - 只算真正的调用：REST 请求和 MCP `tools/call`。MCP 握手（`initialize`、`tools/list`、SSE）不算也不拦，会话可以照常建立。产品按 id 取、删 image-service 存着的图（`GET` / `DELETE /image/v1/images/{id}`）也不算不拦：页面每看一次图就取一次，不是生图；日报里也不计入。
-- 所有产品共用一个计数。计数在内存里，每天第一次用到时从用量记录补回当天已有的调用数，重启不清零；被拦下的请求不计入。
-- 用到 `LIMIT_ALERT_RATIO`（默认 0.8）和用满时各推一次飞书巡检群（`LIMIT_ALERT_WEBHOOK` / `LIMIT_ALERT_SIGN_SECRET`，留空只写日志），每个服务每天各一次。
+- 按产品的上限：`PRODUCTS` 里每个产品可写 `daily_limits`（如 `{"flyai": 50}`），和服务总上限同时生效，用于几个产品共用一份付费额度时不让一个产品用光全天额度。只能写该产品放行了的服务，写错网关起不来；没写的服务只受总上限。
+- 转发前先占一次，转发结束后这几种退回、不占上限：网关连接池满没转出去（`busy`），服务在响应头里声明这次没调上游（`X-Upstream-Calls: 0`，记账 `outcome=rejected`，这个头不转给调用方）。不按状态码推断：reader 调完付费上游、原网页不存在时也回 404。目前只有 flyai 会声明（参数不合法、并发满）。
+- 计数在内存里，每天第一次用到时从用量记录补回当天已占的次数（同一口径），重启不清零；被拦下的请求不计入。
+- 用到 `LIMIT_ALERT_RATIO`（默认 0.8）和用满时各推一次飞书巡检群（`LIMIT_ALERT_WEBHOOK` / `LIMIT_ALERT_SIGN_SECRET`，留空只写日志），每个服务、每个产品的上限每天各一次。
 - 服务内部还有按上游的额度（search、image、reader 各自的 `PROVIDER_DAILY_LIMITS`），通常先触发。
 
 ## 用量
