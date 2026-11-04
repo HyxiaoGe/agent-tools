@@ -99,6 +99,7 @@
 一次读取的总时限 10s（`READ_TOTAL_TIMEOUT`），超时即放弃该网页：Fusion 会并行读多个网页、等最慢的那个，读不到的要尽快放弃。
 
 1. **0s：直接抓取**（`direct_read.py`）。DoH 解析并核验全部是公网地址后直连，trafilatura 提取正文。免费，成功即返回。
+   代码块和标签页提取前先处理（`code_blocks.py`）：trafilatura 按 class 去噪，文档站包代码的 div 常带 scrollbar、button 这类词，整块代码被扔掉（docs.langchain.com 一页 27 段一段不剩），列表项里的代码被压成一行。所以每段代码先换成占位、提取完换回 Markdown 代码块（带页面标的语言、文件名）；标签页没选中的那几页也显示，页首加标签名。代码在侧栏、页脚这类被去掉的地方时照样不要。
 2. **1.5s 还没成功**（`DIRECT_HEDGE_DELAY`，直接抓取先失败则立即）：**同时请求 Firecrawl 和 Tavily**，直接抓取继续跑，谁先读到正文用谁。
 3. **Firecrawl 报原网页 404/410**：立即结束，返回 `page_not_found`，不再等其他方式。
 4. **Jina 只兜底**：Firecrawl 失败（超时、被拦截、原网页 403 等其他错误码、无正文、号池全部不可用）后才启动；没配 Firecrawl 时第 2 步直接带上 Jina。Jina 会把错误页包装成 200 返回，这里按它头部的 `Warning: Target URL returned error <状态码>` 识别，错误页不当正文。
