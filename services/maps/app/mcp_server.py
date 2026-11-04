@@ -3,7 +3,9 @@
 说明（英文，模型看的）写在这里，两个产品共用，以 Fusion 的说明为底（runtime_prompts.toml 的 [amap]），带上了这些：
 用户限定了区就每次搜索都带上、没有就如实说（Fusion 16df25f5）；不给坐标；重名的四种情况（Fusion c3bc81cb、c1bf8a0a）；
 出发时间只记用户原话、不按那个时刻算（8137c527）；公交不给总距离。
-没带的：Fusion 的“公交没有票价”（这里取了 fare_yuan）；Fusion 收尾那几条（同类返回值可以直接算差、不讲停车和实时拥堵、limitations 里的事不暗示，TOML:290-292）。
+Fusion 收尾那三条（同类返回值可以直接算差、没返回的停车和拥堵等不当事实讲、limitations 里的事不暗示，TOML:290-292）11-04 Sean 定加上，
+按这里的数据改写：limitations 是代号，举了 first_term_only 的例子；驾车用时已按查询时路况算，所以路线那条写“某条路堵不堵”。
+没带的：Fusion 的“公交没有票价”（这里取了 fare_yuan）。
 “中国大陆”“评分满分 5”“驾车用时按查询时路况”“人均消费”这些是这里新写的，不是 Fusion 的说明。
 产品专有的话由产品接在后面：回答风格（不用表格、不提服务商名字）、结果怎么显示、和别的工具怎么配合（Fusion 的航班、火车站换乘那段）。
 所以这里不点名别的工具、不提卡片、不写工具自己的名字（产品可能改名）。
@@ -58,6 +60,9 @@ Using the result:
 - Do not infer real-time queues, availability, reservations, walking time between places, or distance between places. Do not describe places as adjacent, on the way, or near each other unless returned fields show it, and do not infer attributes such as taste or merchant density from a place name or address.
 - Discuss a place's distance only when it returned distance_m, and only as the distance from this query's anchor, never between places.
 - Keep comparisons and superlatives within the returned places; do not turn them into citywide or general claims.
+- You may calculate direct differences between returned values of the same kind, such as ratings or distances; do not introduce values that were not returned.
+- Do not state unreturned specifics such as parking, queues, availability, reservations or real-time prices as facts; when one matters to the user's question, say this query cannot confirm it.
+- limitations lists what this query did not cover. Never assert or imply those items in any wording; for example, with first_term_only do not present the results as covering the other terms or say none were found for them. If the user asks about them, say this query cannot confirm them.
 - To get a route to or from a returned place, use its place_id together with its returned name.
 
 On failure the result has ok=false and says what to do next. In every case, do not fabricate place facts."""
@@ -80,6 +85,9 @@ Using the result:
 - Refer only to routes and fields actually returned; do not introduce an absent route or transport mode. When a field the answer depends on is missing, say this query's results cannot confirm it; do not guess or fill it in.
 - Driving durations are estimated from traffic at the time of this query. Do not estimate route time, distance, fares or tolls beyond returned values. For transit use only the returned transit_type, transfers, legs, fare_yuan and alternatives; do not guess missing lines, stops, entrances, exits or walking distances. Transit has no total distance; do not derive one.
 - fare_yuan is the reference fare the map data gives for the plan; do not present it as exact or apply discounts.
+- You may calculate direct differences between returned values of the same kind, such as how much faster one mode is than another; do not introduce values that were not returned.
+- Do not state unreturned specifics such as parking, congestion on particular roads, or real-time prices as facts; when one matters to the user's question, say this query cannot confirm it.
+- limitations lists what this query did not cover. Never assert or imply those items in any wording. If the user asks about them, say this query cannot confirm them.
 - When requested_departure_time was passed, clearly state that the routes were calculated for the time of this query, not for that time, and do not infer an arrival time.
 
 On failure the result has ok=false and says what to do next. In every case, do not fabricate route facts."""
