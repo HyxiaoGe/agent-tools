@@ -1,0 +1,429 @@
+{
+ "data": {
+  "itemList": [
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "310100",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 22:43:00",
+        "arrStationCode": "AOH",
+        "arrStationName": "上海虹桥站",
+        "arrStationShortName": "上海虹桥",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "430100",
+        "depCityName": "长沙",
+        "depDateTime": "2026-11-12 18:40:00",
+        "depStationCode": "CWQ",
+        "depStationName": "长沙南站",
+        "depStationShortName": "长沙南",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "243",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G252",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "243",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_unknown/1",
+    "price": "482.00",
+    "totalDuration": "243"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "310100",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 22:56:00",
+        "arrStationCode": "AOH",
+        "arrStationName": "上海虹桥站",
+        "arrStationShortName": "上海虹桥",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "430100",
+        "depCityName": "长沙",
+        "depDateTime": "2026-11-12 17:05:00",
+        "depStationCode": "CWQ",
+        "depStationName": "长沙南站",
+        "depStationShortName": "长沙南",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "351",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G1506",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "351",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_unknown/2",
+    "price": "429.00",
+    "totalDuration": "351"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "310100",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 22:01:00",
+        "arrStationCode": "AOH",
+        "arrStationName": "上海虹桥站",
+        "arrStationShortName": "上海虹桥",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "430100",
+        "depCityName": "长沙",
+        "depDateTime": "2026-11-12 18:01:00",
+        "depStationCode": "CWQ",
+        "depStationName": "长沙南站",
+        "depStationShortName": "长沙南",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "240",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G206",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "240",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_unknown/3",
+    "price": "499.00",
+    "totalDuration": "240"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "310100",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 23:04:00",
+        "arrStationCode": "AOH",
+        "arrStationName": "上海虹桥站",
+        "arrStationShortName": "上海虹桥",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "430100",
+        "depCityName": "长沙",
+        "depDateTime": "2026-11-12 18:45:00",
+        "depStationCode": "CWQ",
+        "depStationName": "长沙南站",
+        "depStationShortName": "长沙南",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "259",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G208",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "259",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_unknown/4",
+    "price": "490.00",
+    "totalDuration": "259"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "310100",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 15:09:00",
+        "arrStationCode": "AOH",
+        "arrStationName": "上海虹桥站",
+        "arrStationShortName": "上海虹桥",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "430100",
+        "depCityName": "长沙",
+        "depDateTime": "2026-11-12 11:05:00",
+        "depStationCode": "CWQ",
+        "depStationName": "长沙南站",
+        "depStationShortName": "长沙南",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "244",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G204",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "244",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_unknown/5",
+    "price": "517.00",
+    "totalDuration": "244"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "310100",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 16:54:00",
+        "arrStationCode": "AOH",
+        "arrStationName": "上海虹桥站",
+        "arrStationShortName": "上海虹桥",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "430100",
+        "depCityName": "长沙",
+        "depDateTime": "2026-11-12 12:52:00",
+        "depStationCode": "CWQ",
+        "depStationName": "长沙南站",
+        "depStationShortName": "长沙南",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "242",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G242",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "242",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_unknown/6",
+    "price": "511.00",
+    "totalDuration": "242"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "310100",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 21:57:00",
+        "arrStationCode": "AOH",
+        "arrStationName": "上海虹桥站",
+        "arrStationShortName": "上海虹桥",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "430100",
+        "depCityName": "长沙",
+        "depDateTime": "2026-11-12 17:40:00",
+        "depStationCode": "CWQ",
+        "depStationName": "长沙南站",
+        "depStationShortName": "长沙南",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "257",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G220",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "257",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_unknown/7",
+    "price": "515.00",
+    "totalDuration": "257"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "310100",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 21:54:00",
+        "arrStationCode": "AOH",
+        "arrStationName": "上海虹桥站",
+        "arrStationShortName": "上海虹桥",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "430100",
+        "depCityName": "长沙",
+        "depDateTime": "2026-11-12 17:36:00",
+        "depStationCode": "CWQ",
+        "depStationName": "长沙南站",
+        "depStationShortName": "长沙南",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "258",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G254",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "258",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_unknown/8",
+    "price": "515.00",
+    "totalDuration": "258"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "310100",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 18:22:00",
+        "arrStationCode": "AOH",
+        "arrStationName": "上海虹桥站",
+        "arrStationShortName": "上海虹桥",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "430100",
+        "depCityName": "长沙",
+        "depDateTime": "2026-11-12 14:20:00",
+        "depStationCode": "CWQ",
+        "depStationName": "长沙南站",
+        "depStationShortName": "长沙南",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "242",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G238",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "242",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_unknown/9",
+    "price": "524.00",
+    "totalDuration": "242"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "310100",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 20:20:00",
+        "arrStationCode": "AOH",
+        "arrStationName": "上海虹桥站",
+        "arrStationShortName": "上海虹桥",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "430100",
+        "depCityName": "长沙",
+        "depDateTime": "2026-11-12 16:18:00",
+        "depStationCode": "CWQ",
+        "depStationName": "长沙南站",
+        "depStationShortName": "长沙南",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "242",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G202",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "242",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_unknown/10",
+    "price": "524.00",
+    "totalDuration": "242"
+   }
+  ]
+ },
+ "message": "success",
+ "status": 0,
+ "systemMessage": null
+}

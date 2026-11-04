@@ -8,6 +8,7 @@ import process from "node:process";
 import test from "node:test";
 
 import { runFlyaiCli } from "../src/flyai-runner.js";
+import { projectProviderResponse } from "../src/projector.js";
 import { createAdapterServer } from "../src/server.js";
 import { parseStrictJson } from "../src/strict-json.js";
 
@@ -325,7 +326,7 @@ test("真实航班 itemList 使用固定 argv 并只投影安全字段", async (
 test("城市和车站请求均精确匹配，错地点、错日期和非直达结果被丢弃", async () => {
   const payload = providerEnvelope([
     rawTrain(),
-    rawTrain({ segment: { marketingTransportNo: "G101", depCityName: "珠海市" } }),
+    rawTrain({ segment: { marketingTransportNo: "G101", depCityName: "珠海市", depStationName: "珠海站", depStationCode: "ZHQ" } }),
     rawTrain({ segment: { marketingTransportNo: "G102", depStationName: "深圳站" } }),
     rawTrain({ segment: { marketingTransportNo: "G103", depDateTime: "2026-08-03 09:00:00" } }),
     rawTrain({
@@ -894,4 +895,29 @@ test("HTTP 失败响应不回显供应商 stderr、原始结果或 Key", async (
   } finally {
     await close(server);
   }
+});
+
+test("县级市的车站和去掉城市名的简称也算同一地点", () => {
+  const request = { origin: "昆山", destination: "虹桥", departure_date: "2026-08-02", sort_by: "recommended", limit: 5 };
+  const payload = providerEnvelope([
+    rawTrain({
+      segment: {
+        marketingTransportNo: "G7001",
+        depCityName: "苏州",
+        depStationName: "昆山南站",
+        arrCityName: "上海",
+        arrStationName: "上海虹桥站",
+      },
+    }),
+  ]);
+  assert.deepEqual(
+    projectProviderResponse(payload, request, "train").map((item) => item.transport_no),
+    ["G7001"],
+  );
+});
+
+test("预订链接放行飞猪短链 router.feizhu.com", () => {
+  const request = { origin: "深圳", destination: "广州", departure_date: "2026-08-02", sort_by: "recommended", limit: 5 };
+  const payload = providerEnvelope([rawTrain({ item: { jumpUrl: "https://router.feizhu.com/ws/test01" } })]);
+  assert.equal(projectProviderResponse(payload, request, "train")[0].booking_url, "https://router.feizhu.com/ws/test01");
 });

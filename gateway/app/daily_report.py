@@ -39,12 +39,22 @@ _MAX_ATTEMPTS_PER_DAY = 3
 _STATE_KEEP_DAYS = 10
 _ROLE_LABELS = {"primary": "（主）", "fallback": "（备用）"}
 # 各服务按上游计数的接口；image / reader 的字段统一为 day / available / providers[provider, limit, used, rejected]，
-# maps 没有每日上限（额度在高德、腾讯那边），字段是 providers[provider, requests, failed, quota, skipped] 和 fallbacks。
+# maps 没有每日上限（额度在高德、腾讯那边），字段是 providers[provider, requests, failed, quota, skipped] 和 fallbacks；
+# flyai 的字段是 calls（启动 CLI 的次数）、failed、failures{代号: 次数}、persistent（计数是否存盘）。
 UPSTREAM_SUMMARY_PATHS = {
     "search": "/usage/daily",
     "image": "/v1/quota",
     "reader": "/usage/daily",
     "maps": "/usage/daily",
+    "flyai": "/usage/daily",
+}
+# flyai CLI 失败代号的说法，没列的原样显示
+_FLYAI_FAILURES = {
+    "provider_timeout": "超时",
+    "provider_error": "CLI 出错",
+    "invalid_provider_response": "返回看不懂",
+    "provider_output_too_large": "返回过大",
+    "request_aborted": "调用方断开",
 }
 # 有请求却没有任何上游计数时的常见原因（手动查 3 天前的日期时计数已过期）
 _NO_UPSTREAM_REASONS = {"image": "全部命中缓存", "reader": "全部直接抓取"}
@@ -207,6 +217,27 @@ def _maps_lines(summary: dict | None, gateway_calls: int) -> list[str]:
     return []
 
 
+def _flyai_lines(summary: dict | None, gateway_calls: int) -> list[str]:
+    """flyai 的 CLI 调用，一行：调用 / 失败，失败按原因附上；没调用也没请求时不出。"""
+    if summary is None:
+        return ["flyai 上游：获取失败"]
+    if not summary.get("available", False):
+        return ["flyai 上游：计数不可用"]
+    calls = summary.get("calls", 0)
+    if calls:
+        line = f"flyai 上游（CLI 调用 / 失败）：{calls:,} / {summary.get('failed', 0):,}"
+        failures = summary.get("failures") or {}
+        if failures:
+            parts = (f"{_FLYAI_FAILURES.get(code, code)} {n:,}" for code, n in sorted(failures.items()))
+            line += "（" + "，".join(parts) + "）"
+        if summary.get("persistent") is False:
+            line += "，计数没存盘、重启清零"
+        return [line]
+    if gateway_calls:
+        return ["flyai 上游：没有调用 CLI（参数不对、排队超时，或计数已过 3 天保留期）"]
+    return []
+
+
 def _limit_note(svc: ServiceStats, limit: int | None) -> str:
     # 只在用量过半或有拦截时提示上限，平时不占篇幅
     if limit is None or not (svc.limited or svc.calls >= limit / 2):
@@ -222,7 +253,7 @@ def render_report(
     limits: Mapping[str, int] | None = None,
     upstream_summaries: Mapping[str, dict | None] | None = None,
 ) -> str:
-    """upstream_summaries：image / reader / maps 的上游计数（键缺失表示没拉取，不出这一段）。"""
+    """upstream_summaries：image / reader / maps / flyai 的上游计数（键缺失表示没拉取，不出这一段）。"""
     limits = limits or {}
     upstream_summaries = upstream_summaries or {}
     lines = [f"【agent-tools 日报】{stats.day.strftime('%m-%d')}（北京时间）"]
@@ -250,6 +281,8 @@ def render_report(
             lines.extend(_quota_lines(service, upstream_summaries[service], calls(service)))
     if "maps" in upstream_summaries:
         lines.extend(_maps_lines(upstream_summaries["maps"], calls("maps")))
+    if "flyai" in upstream_summaries:
+        lines.extend(_flyai_lines(upstream_summaries["flyai"], calls("flyai")))
     return "\n".join(lines)
 
 

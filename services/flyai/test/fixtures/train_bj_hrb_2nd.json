@@ -1,0 +1,429 @@
+{
+ "data": {
+  "itemList": [
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "230100",
+        "arrCityName": "哈尔滨",
+        "arrDateTime": "2026-11-12 18:49:00",
+        "arrStationCode": "HBB",
+        "arrStationName": "哈尔滨站",
+        "arrStationShortName": "哈尔滨",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "110100",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 14:00:00",
+        "depStationCode": "IFP",
+        "depStationName": "北京朝阳站",
+        "depStationShortName": "北京朝阳",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "289",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G117",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "289",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_bj_hrb_2nd/1",
+    "price": "636.00",
+    "totalDuration": "289"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "230100",
+        "arrCityName": "哈尔滨",
+        "arrDateTime": "2026-11-12 17:49:00",
+        "arrStationCode": "HBB",
+        "arrStationName": "哈尔滨站",
+        "arrStationShortName": "哈尔滨",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "110100",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 11:20:00",
+        "depStationCode": "IFP",
+        "depStationName": "北京朝阳站",
+        "depStationShortName": "北京朝阳",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "389",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G3513",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "389",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_bj_hrb_2nd/2",
+    "price": "636.00",
+    "totalDuration": "389"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "230100",
+        "arrCityName": "哈尔滨",
+        "arrDateTime": "2026-11-12 14:13:00",
+        "arrStationCode": "VAB",
+        "arrStationName": "哈尔滨西站",
+        "arrStationShortName": "哈尔滨西",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "110100",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 08:25:00",
+        "depStationCode": "IFP",
+        "depStationName": "北京朝阳站",
+        "depStationShortName": "北京朝阳",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "348",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G3503",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "348",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_bj_hrb_2nd/3",
+    "price": "546.00",
+    "totalDuration": "348"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "230100",
+        "arrCityName": "哈尔滨",
+        "arrDateTime": "2026-11-12 12:33:00",
+        "arrStationCode": "VAB",
+        "arrStationName": "哈尔滨西站",
+        "arrStationShortName": "哈尔滨西",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "110100",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 08:00:00",
+        "depStationCode": "IFP",
+        "depStationName": "北京朝阳站",
+        "depStationShortName": "北京朝阳",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "273",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G101",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "273",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_bj_hrb_2nd/4",
+    "price": "605.00",
+    "totalDuration": "273"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "230100",
+        "arrCityName": "哈尔滨",
+        "arrDateTime": "2026-11-12 13:28:00",
+        "arrStationCode": "VAB",
+        "arrStationName": "哈尔滨西站",
+        "arrStationShortName": "哈尔滨西",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "110100",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 08:55:00",
+        "depStationCode": "IFP",
+        "depStationName": "北京朝阳站",
+        "depStationShortName": "北京朝阳",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "273",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G105",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "273",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_bj_hrb_2nd/5",
+    "price": "605.00",
+    "totalDuration": "273"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "230100",
+        "arrCityName": "哈尔滨",
+        "arrDateTime": "2026-11-12 12:40:00",
+        "arrStationCode": "VAB",
+        "arrStationName": "哈尔滨西站",
+        "arrStationShortName": "哈尔滨西",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "110100",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 08:05:00",
+        "depStationCode": "IFP",
+        "depStationName": "北京朝阳站",
+        "depStationShortName": "北京朝阳",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "275",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G103",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "275",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_bj_hrb_2nd/6",
+    "price": "605.00",
+    "totalDuration": "275"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "230100",
+        "arrCityName": "哈尔滨",
+        "arrDateTime": "2026-11-12 15:38:00",
+        "arrStationCode": "VAB",
+        "arrStationName": "哈尔滨西站",
+        "arrStationShortName": "哈尔滨西",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "110100",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 11:05:00",
+        "depStationCode": "IFP",
+        "depStationName": "北京朝阳站",
+        "depStationShortName": "北京朝阳",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "273",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G115",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "273",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_bj_hrb_2nd/7",
+    "price": "605.00",
+    "totalDuration": "273"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "230100",
+        "arrCityName": "哈尔滨",
+        "arrDateTime": "2026-11-12 14:19:00",
+        "arrStationCode": "VAB",
+        "arrStationName": "哈尔滨西站",
+        "arrStationShortName": "哈尔滨西",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "110100",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 09:37:00",
+        "depStationCode": "IFP",
+        "depStationName": "北京朝阳站",
+        "depStationShortName": "北京朝阳",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "282",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G107",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "282",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_bj_hrb_2nd/8",
+    "price": "605.00",
+    "totalDuration": "282"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "230100",
+        "arrCityName": "哈尔滨",
+        "arrDateTime": "2026-11-12 19:25:00",
+        "arrStationCode": "VAB",
+        "arrStationName": "哈尔滨西站",
+        "arrStationShortName": "哈尔滨西",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "110100",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 14:50:00",
+        "depStationCode": "IFP",
+        "depStationName": "北京朝阳站",
+        "depStationShortName": "北京朝阳",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "275",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G123",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "275",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_bj_hrb_2nd/9",
+    "price": "634.00",
+    "totalDuration": "275"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "230100",
+        "arrCityName": "哈尔滨",
+        "arrDateTime": "2026-11-12 20:47:00",
+        "arrStationCode": "VAB",
+        "arrStationName": "哈尔滨西站",
+        "arrStationShortName": "哈尔滨西",
+        "arrTerm": null,
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "110100",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 16:05:00",
+        "depStationCode": "IFP",
+        "depStationName": "北京朝阳站",
+        "depStationShortName": "北京朝阳",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "282",
+        "marketingTransportName": "高铁",
+        "marketingTransportNo": "G125",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "二等座",
+        "stopInfos": null,
+        "transportType": "火车"
+       }
+      ],
+      "totalDuration": "282",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/train_bj_hrb_2nd/10",
+    "price": "634.00",
+    "totalDuration": "282"
+   }
+  ]
+ },
+ "message": "success",
+ "status": 0,
+ "systemMessage": null
+}

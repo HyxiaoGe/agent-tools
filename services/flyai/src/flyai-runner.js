@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { TextDecoder } from "node:util";
@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { parseStrictJson } from "./strict-json.js";
 
 const ALLOWED_COMMANDS = new Set(["search-flight", "search-train"]);
+const DEVICE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const DEFAULT_BUNDLE_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -102,14 +103,24 @@ export async function runFlyaiCli({
   timeoutMs = 20_000,
   maxStdoutBytes = 256 * 1024,
   maxStderrBytes = 16 * 1024,
+  deviceId,
   signal,
 }) {
   validateInvocation({ command, argv, apiKey, homeDir, executablePath, bundlePath });
+  if (deviceId !== undefined && (typeof deviceId !== "string" || !DEVICE_ID_PATTERN.test(deviceId))) {
+    throw safeError("invalid_invocation");
+  }
   if (signal?.aborted) throw safeError("request_aborted");
 
   await mkdir(homeDir, { recursive: true, mode: 0o700 });
   const callHome = await mkdtemp(path.join(homeDir, "flyai-call-"));
   try {
+    if (deviceId !== undefined) {
+      // CLI 的设备标识读 ~/.flyai/device-id（没有就随机生成一个 UUID 写进去）。每次调用都是新的临时 HOME，
+      // 不预先放进去就每次都是新设备；CLI 说明要求改默认设备标识前先和飞猪风控确认，这里固定成同一个，回到 CLI 的默认行为。
+      await mkdir(path.join(callHome, ".flyai"), { mode: 0o700 });
+      await writeFile(path.join(callHome, ".flyai", "device-id"), `${deviceId}\n`, { mode: 0o600 });
+    }
     const child = spawn(executablePath, [bundlePath, command, ...argv], {
       cwd: callHome,
       detached: process.platform !== "win32",

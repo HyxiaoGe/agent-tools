@@ -1,0 +1,439 @@
+{
+ "data": {
+  "itemList": [
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "SHA",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 08:55:00",
+        "arrStationCode": "PVG",
+        "arrStationName": "浦东国际机场",
+        "arrStationShortName": "浦东",
+        "arrTerm": "T1",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "BJS",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 07:00:00",
+        "depStationCode": "PEK",
+        "depStationName": "首都国际机场",
+        "depStationShortName": "首都",
+        "depTerm": "T2",
+        "depWeekAbbrName": "周四",
+        "duration": "115",
+        "marketingTransportName": "东航",
+        "marketingTransportNo": "MU5100",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "公务舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "115",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_bj_sh_first/1",
+    "tags": null,
+    "ticketPrice": "1345.00",
+    "totalDuration": "115"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "SHA",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 09:15:00",
+        "arrStationCode": "SHA",
+        "arrStationName": "虹桥国际机场",
+        "arrStationShortName": "虹桥",
+        "arrTerm": "T2",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "BJS",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 07:20:00",
+        "depStationCode": "PKX",
+        "depStationName": "大兴国际机场",
+        "depStationShortName": "大兴",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "115",
+        "marketingTransportName": "东航",
+        "marketingTransportNo": "MU5138",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "公务舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "115",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_bj_sh_first/2",
+    "tags": null,
+    "ticketPrice": "1513.00",
+    "totalDuration": "115"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "SHA",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 10:10:00",
+        "arrStationCode": "PVG",
+        "arrStationName": "浦东国际机场",
+        "arrStationShortName": "浦东",
+        "arrTerm": "T2",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "BJS",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 08:00:00",
+        "depStationCode": "PKX",
+        "depStationName": "大兴国际机场",
+        "depStationShortName": "大兴",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "130",
+        "marketingTransportName": "厦航",
+        "marketingTransportNo": "MF8561",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "公务舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "130",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_bj_sh_first/3",
+    "tags": null,
+    "ticketPrice": "1150.00",
+    "totalDuration": "130"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "SHA",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 23:30:00",
+        "arrStationCode": "PVG",
+        "arrStationName": "浦东国际机场",
+        "arrStationShortName": "浦东",
+        "arrTerm": "T2",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "BJS",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 21:20:00",
+        "depStationCode": "PKX",
+        "depStationName": "大兴国际机场",
+        "depStationShortName": "大兴",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "130",
+        "marketingTransportName": "吉祥",
+        "marketingTransportNo": "HO1254",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "公务舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "130",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_bj_sh_first/4",
+    "tags": null,
+    "ticketPrice": "1185.00",
+    "totalDuration": "130"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "SHA",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 21:50:00",
+        "arrStationCode": "SHA",
+        "arrStationName": "虹桥国际机场",
+        "arrStationShortName": "虹桥",
+        "arrTerm": "T2",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "BJS",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 19:45:00",
+        "depStationCode": "PKX",
+        "depStationName": "大兴国际机场",
+        "depStationShortName": "大兴",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "125",
+        "marketingTransportName": "南航",
+        "marketingTransportNo": "CZ5663",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "公务舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "125",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_bj_sh_first/5",
+    "tags": null,
+    "ticketPrice": "1630.00",
+    "totalDuration": "125"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "SHA",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 16:05:00",
+        "arrStationCode": "SHA",
+        "arrStationName": "虹桥国际机场",
+        "arrStationShortName": "虹桥",
+        "arrTerm": "T2",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "BJS",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 14:00:00",
+        "depStationCode": "PKX",
+        "depStationName": "大兴国际机场",
+        "depStationShortName": "大兴",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "125",
+        "marketingTransportName": "吉祥",
+        "marketingTransportNo": "HO1252",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "公务舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "125",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_bj_sh_first/6",
+    "tags": null,
+    "ticketPrice": "1685.00",
+    "totalDuration": "125"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "SHA",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 15:55:00",
+        "arrStationCode": "SHA",
+        "arrStationName": "虹桥国际机场",
+        "arrStationShortName": "虹桥",
+        "arrTerm": "T2",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "BJS",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 13:50:00",
+        "depStationCode": "PKX",
+        "depStationName": "大兴国际机场",
+        "depStationShortName": "大兴",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "125",
+        "marketingTransportName": "东航",
+        "marketingTransportNo": "MU6123",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "公务舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "125",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_bj_sh_first/7",
+    "tags": null,
+    "ticketPrice": "1728.00",
+    "totalDuration": "125"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "SHA",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 13:55:00",
+        "arrStationCode": "SHA",
+        "arrStationName": "虹桥国际机场",
+        "arrStationShortName": "虹桥",
+        "arrTerm": "T2",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "BJS",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 12:00:00",
+        "depStationCode": "PEK",
+        "depStationName": "首都国际机场",
+        "depStationShortName": "首都",
+        "depTerm": "T2",
+        "depWeekAbbrName": "周四",
+        "duration": "115",
+        "marketingTransportName": "东航",
+        "marketingTransportNo": "MU5110",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "公务舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "115",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_bj_sh_first/8",
+    "tags": null,
+    "ticketPrice": "2660.00",
+    "totalDuration": "115"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "SHA",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 21:40:00",
+        "arrStationCode": "PVG",
+        "arrStationName": "浦东国际机场",
+        "arrStationShortName": "浦东",
+        "arrTerm": "T1",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "BJS",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 19:30:00",
+        "depStationCode": "PKX",
+        "depStationName": "大兴国际机场",
+        "depStationShortName": "大兴",
+        "depTerm": null,
+        "depWeekAbbrName": "周四",
+        "duration": "130",
+        "marketingTransportName": "东航",
+        "marketingTransportNo": "MU5130",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "公务舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "130",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_bj_sh_first/9",
+    "tags": null,
+    "ticketPrice": "1405.00",
+    "totalDuration": "130"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": false,
+        "arrCityCode": "SHA",
+        "arrCityName": "上海",
+        "arrDateTime": "2026-11-12 10:35:00",
+        "arrStationCode": "SHA",
+        "arrStationName": "虹桥国际机场",
+        "arrStationShortName": "虹桥",
+        "arrTerm": "T2",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "BJS",
+        "depCityName": "北京",
+        "depDateTime": "2026-11-12 08:25:00",
+        "depStationCode": "PEK",
+        "depStationName": "首都国际机场",
+        "depStationShortName": "首都",
+        "depTerm": "T2",
+        "depWeekAbbrName": "周四",
+        "duration": "130",
+        "marketingTransportName": "新海航|海南航空",
+        "marketingTransportNo": "HU7603",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "公务舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "130",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_bj_sh_first/10",
+    "tags": null,
+    "ticketPrice": "1600.00",
+    "totalDuration": "130"
+   }
+  ]
+ },
+ "message": "success",
+ "status": 0,
+ "systemMessage": null
+}

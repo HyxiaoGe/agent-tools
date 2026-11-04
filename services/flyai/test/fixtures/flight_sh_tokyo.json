@@ -1,0 +1,439 @@
+{
+ "data": {
+  "itemList": [
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": true,
+        "arrCityCode": "TYO",
+        "arrCityName": "东京",
+        "arrDateTime": "2026-11-12 04:40:00",
+        "arrStationCode": "HND",
+        "arrStationName": "羽田机场",
+        "arrStationShortName": "羽田",
+        "arrTerm": "T3",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "SHA",
+        "depCityName": "上海",
+        "depDateTime": "2026-11-12 01:10:00",
+        "depStationCode": "PVG",
+        "depStationName": "浦东国际机场",
+        "depStationShortName": "浦东",
+        "depTerm": "T2",
+        "depWeekAbbrName": "周四",
+        "duration": "150",
+        "marketingTransportName": "乐桃航空",
+        "marketingTransportNo": "MM876",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "经济舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "150",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_sh_tokyo/1",
+    "tags": null,
+    "ticketPrice": "1166.00",
+    "totalDuration": "150"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": true,
+        "arrCityCode": "TYO",
+        "arrCityName": "东京",
+        "arrDateTime": "2026-11-13 01:05:00",
+        "arrStationCode": "HND",
+        "arrStationName": "羽田机场",
+        "arrStationShortName": "羽田",
+        "arrTerm": "T3",
+        "arrWeekAbbrName": "周五",
+        "depCityAbroad": null,
+        "depCityCode": "SHA",
+        "depCityName": "上海",
+        "depDateTime": "2026-11-12 21:35:00",
+        "depStationCode": "PVG",
+        "depStationName": "浦东国际机场",
+        "depStationShortName": "浦东",
+        "depTerm": "T2",
+        "depWeekAbbrName": "周四",
+        "duration": "150",
+        "marketingTransportName": "吉祥",
+        "marketingTransportNo": "HO1385",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "经济舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "150",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_sh_tokyo/2",
+    "tags": null,
+    "ticketPrice": "1527.00",
+    "totalDuration": "150"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": true,
+        "arrCityCode": "TYO",
+        "arrCityName": "东京",
+        "arrDateTime": "2026-11-12 12:00:00",
+        "arrStationCode": "NRT",
+        "arrStationName": "成田国际机场",
+        "arrStationShortName": "成田",
+        "arrTerm": "T2",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "SHA",
+        "depCityName": "上海",
+        "depDateTime": "2026-11-12 08:25:00",
+        "depStationCode": "PVG",
+        "depStationName": "浦东国际机场",
+        "depStationShortName": "浦东",
+        "depTerm": "T2",
+        "depWeekAbbrName": "周四",
+        "duration": "155",
+        "marketingTransportName": "吉祥",
+        "marketingTransportNo": "HO1379",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "经济舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "155",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_sh_tokyo/3",
+    "tags": null,
+    "ticketPrice": "2057.00",
+    "totalDuration": "155"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": true,
+        "arrCityCode": "TYO",
+        "arrCityName": "东京",
+        "arrDateTime": "2026-11-12 18:40:00",
+        "arrStationCode": "NRT",
+        "arrStationName": "成田国际机场",
+        "arrStationShortName": "成田",
+        "arrTerm": "T3",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "SHA",
+        "depCityName": "上海",
+        "depDateTime": "2026-11-12 15:00:00",
+        "depStationCode": "PVG",
+        "depStationName": "浦东国际机场",
+        "depStationShortName": "浦东",
+        "depTerm": "T2",
+        "depWeekAbbrName": "周四",
+        "duration": "160",
+        "marketingTransportName": "春秋",
+        "marketingTransportNo": "9C6217",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "经济舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "160",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_sh_tokyo/4",
+    "tags": null,
+    "ticketPrice": "1188.00",
+    "totalDuration": "160"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": true,
+        "arrCityCode": "TYO",
+        "arrCityName": "东京",
+        "arrDateTime": "2026-11-12 20:50:00",
+        "arrStationCode": "HND",
+        "arrStationName": "羽田机场",
+        "arrStationShortName": "羽田",
+        "arrTerm": "T3",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "SHA",
+        "depCityName": "上海",
+        "depDateTime": "2026-11-12 17:25:00",
+        "depStationCode": "PVG",
+        "depStationName": "浦东国际机场",
+        "depStationShortName": "浦东",
+        "depTerm": "T1",
+        "depWeekAbbrName": "周四",
+        "duration": "145",
+        "marketingTransportName": "东航",
+        "marketingTransportNo": "MU575",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "经济舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "145",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_sh_tokyo/5",
+    "tags": null,
+    "ticketPrice": "4206.00",
+    "totalDuration": "145"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": true,
+        "arrCityCode": "TYO",
+        "arrCityName": "东京",
+        "arrDateTime": "2026-11-12 12:30:00",
+        "arrStationCode": "HND",
+        "arrStationName": "羽田机场",
+        "arrStationShortName": "羽田",
+        "arrTerm": "T3",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "SHA",
+        "depCityName": "上海",
+        "depDateTime": "2026-11-12 09:00:00",
+        "depStationCode": "SHA",
+        "depStationName": "虹桥国际机场",
+        "depStationShortName": "虹桥",
+        "depTerm": "T1",
+        "depWeekAbbrName": "周四",
+        "duration": "150",
+        "marketingTransportName": "上航",
+        "marketingTransportNo": "FM815",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "经济舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "150",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_sh_tokyo/6",
+    "tags": null,
+    "ticketPrice": "4251.00",
+    "totalDuration": "150"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": true,
+        "arrCityCode": "TYO",
+        "arrCityName": "东京",
+        "arrDateTime": "2026-11-12 06:15:00",
+        "arrStationCode": "HND",
+        "arrStationName": "羽田机场",
+        "arrStationShortName": "羽田",
+        "arrTerm": "T3",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "SHA",
+        "depCityName": "上海",
+        "depDateTime": "2026-11-12 02:35:00",
+        "depStationCode": "PVG",
+        "depStationName": "浦东国际机场",
+        "depStationShortName": "浦东",
+        "depTerm": "T2",
+        "depWeekAbbrName": "周四",
+        "duration": "160",
+        "marketingTransportName": "全日空航空",
+        "marketingTransportNo": "NH968",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "经济舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "160",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_sh_tokyo/7",
+    "tags": null,
+    "ticketPrice": "2764.00",
+    "totalDuration": "160"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": true,
+        "arrCityCode": "TYO",
+        "arrCityName": "东京",
+        "arrDateTime": "2026-11-12 18:30:00",
+        "arrStationCode": "HND",
+        "arrStationName": "羽田机场",
+        "arrStationShortName": "羽田",
+        "arrTerm": "T3",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "SHA",
+        "depCityName": "上海",
+        "depDateTime": "2026-11-12 14:55:00",
+        "depStationCode": "PVG",
+        "depStationName": "浦东国际机场",
+        "depStationShortName": "浦东",
+        "depTerm": "T1",
+        "depWeekAbbrName": "周四",
+        "duration": "155",
+        "marketingTransportName": "东航",
+        "marketingTransportNo": "MU539",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "经济舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "155",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_sh_tokyo/8",
+    "tags": null,
+    "ticketPrice": "4206.00",
+    "totalDuration": "155"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": true,
+        "arrCityCode": "TYO",
+        "arrCityName": "东京",
+        "arrDateTime": "2026-11-12 22:20:00",
+        "arrStationCode": "HND",
+        "arrStationName": "羽田机场",
+        "arrStationShortName": "羽田",
+        "arrTerm": "T3",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "SHA",
+        "depCityName": "上海",
+        "depDateTime": "2026-11-12 18:30:00",
+        "depStationCode": "PVG",
+        "depStationName": "浦东国际机场",
+        "depStationShortName": "浦东",
+        "depTerm": "T1",
+        "depWeekAbbrName": "周四",
+        "duration": "170",
+        "marketingTransportName": "日本航空",
+        "marketingTransportNo": "JL086",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "经济舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "170",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_sh_tokyo/9",
+    "tags": null,
+    "ticketPrice": "2052.00",
+    "totalDuration": "170"
+   },
+   {
+    "journeys": [
+     {
+      "journeyType": "直达",
+      "segments": [
+       {
+        "arrCityAbroad": true,
+        "arrCityCode": "TYO",
+        "arrCityName": "东京",
+        "arrDateTime": "2026-11-12 21:30:00",
+        "arrStationCode": "NRT",
+        "arrStationName": "成田国际机场",
+        "arrStationShortName": "成田",
+        "arrTerm": "T3",
+        "arrWeekAbbrName": "周四",
+        "depCityAbroad": null,
+        "depCityCode": "SHA",
+        "depCityName": "上海",
+        "depDateTime": "2026-11-12 17:30:00",
+        "depStationCode": "PVG",
+        "depStationName": "浦东国际机场",
+        "depStationShortName": "浦东",
+        "depTerm": "T2",
+        "depWeekAbbrName": "周四",
+        "duration": "180",
+        "marketingTransportName": "春秋日本航空",
+        "marketingTransportNo": "IJ004",
+        "miles": null,
+        "quantity": null,
+        "seatClassName": "经济舱",
+        "stopInfos": null,
+        "transportType": "飞机"
+       }
+      ],
+      "totalDuration": "180",
+      "transferDuration": ""
+     }
+    ],
+    "jumpUrl": "https://router.feizhu.com/fixture/flight_sh_tokyo/10",
+    "tags": null,
+    "ticketPrice": "1189.00",
+    "totalDuration": "180"
+   }
+  ]
+ },
+ "message": "success",
+ "status": 0,
+ "systemMessage": null
+}
