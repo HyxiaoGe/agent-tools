@@ -10,9 +10,11 @@
 // 结果：structuredContent 是整份（给页面画卡片），文字是给模型的那份 JSON（去掉 ok 和预订链接，免得它把链接贴给用户）。
 // 失败：structuredContent 是 {ok:false, error:{code, message, retryable}}，文字是给模型的说明；isError 保持 false，和 maps 一样。
 // 只有 busy 是 retryable。参数没过 schema 的，SDK 自己回 isError=true，没有调用飞猪。
+//
+// 协议：MCP SDK v2 的 createMcpHandler，2026-07-28（新）和 2025 年那几版（旧，无状态）一起接。
+// 新客户端（灵稿的 Python mcp 2.3）先按新协议连，旧 SDK 不认会回 400、再走老握手，一次调用要四个请求，现在两个。
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import * as z from "zod";
 
 import {
@@ -215,7 +217,7 @@ const RUNNER_ERRORS = {
 };
 
 /**
- * 每个 HTTP 请求建一个 MCP server（无状态）。call(kind, args, extra) 返回 CallToolResult。
+ * 每个 HTTP 请求建一个 MCP server（无状态），工具返回 CallToolResult。
  * context：{ gate, scope, execute, clock, onProviderCall, signal, log, queueTimeoutMs }。
  */
 export function buildMcpServer(context) {
@@ -229,21 +231,21 @@ export function buildMcpServer(context) {
   const annotations = { readOnlyHint: true, idempotentHint: true, openWorldHint: true };
   server.registerTool(
     FLIGHT_TOOL,
-    { description: FLIGHT_DESCRIPTION, inputSchema: FLIGHT_SHAPE, annotations },
-    (args, extra) => runTool("flight", args, extra, context),
+    { description: FLIGHT_DESCRIPTION, inputSchema: z.object(FLIGHT_SHAPE), annotations },
+    (args, ctx) => runTool("flight", args, ctx, context),
   );
   server.registerTool(
     TRAIN_TOOL,
-    { description: TRAIN_DESCRIPTION, inputSchema: TRAIN_SHAPE, annotations },
-    (args, extra) => runTool("train", args, extra, context),
+    { description: TRAIN_DESCRIPTION, inputSchema: z.object(TRAIN_SHAPE), annotations },
+    (args, ctx) => runTool("train", args, ctx, context),
   );
   return server;
 }
 
-async function runTool(kind, args, extra, context) {
+async function runTool(kind, args, ctx, context) {
   const { gate, scope, execute, clock, onProviderCall, signal, log, queueTimeoutMs = QUEUE_TIMEOUT_MS } = context;
   let request = null;
-  const abortSignal = AbortSignal.any([signal, extra.signal].filter(Boolean));
+  const abortSignal = AbortSignal.any([signal, ctx.mcpReq?.signal].filter(Boolean));
   try {
     const now = clock();
     request = normalizeToolArgs(kind, args, now);
@@ -274,37 +276,70 @@ async function runTool(kind, args, extra, context) {
   }
 }
 
+// 转给 SDK 时不带的头：连接本身的，以及由请求体重新算的长度
+const HOP_HEADERS = new Set(["host", "connection", "keep-alive", "transfer-encoding", "upgrade", "content-length"]);
+
+async function readBody(request, maxBytes) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > maxBytes) throw new Error("mcp request body too large");
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+function webHeaders(nodeHeaders) {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(nodeHeaders)) {
+    if (value === undefined || HOP_HEADERS.has(name)) continue;
+    for (const item of Array.isArray(value) ? value : [value]) headers.append(name, item);
+  }
+  return headers;
+}
+
 /**
- * 处理一次 POST /mcp。没真正启动 CLI 的响应都带 x-upstream-calls: 0（握手、列工具、参数不对、排队超时），
- * 网关据此不算进每日上限。
+ * 处理一次 POST /mcp（请求体大小由调用方按 content-length 先挡过）。
+ * 等 SDK 把整个响应给出来（结果都很小）才写响应头，所以能照实标出这次有没有启动 CLI：
+ * 没启动的（握手、列工具、参数不对、排队超时）带 x-upstream-calls: 0，网关据此不算进每日上限。
+ * 响应格式由 SDK 定：新协议是一块 JSON（工具不发中途通知），旧协议的无状态那一路是一条 SSE 消息，客户端两种都认。
  */
-export async function handleMcpRequest(request, response, context) {
+export async function handleMcpRequest(request, response, context, { maxBytes = 64 * 1024 } = {}) {
   let providerCalled = false;
-  const writeHead = response.writeHead;
-  response.writeHead = function patchedWriteHead(...args) {
-    if (!providerCalled && !response.headersSent) response.setHeader("x-upstream-calls", "0");
-    return writeHead.apply(this, args);
-  };
   const controller = new AbortController();
   const abortOnClose = () => {
     if (!response.writableEnded) controller.abort();
   };
   response.once("close", abortOnClose);
 
-  const server = buildMcpServer({
-    ...context,
-    signal: controller.signal,
-    onProviderCall: () => {
-      providerCalled = true;
-    },
-  });
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+  // 每个请求一个 handler：onProviderCall、signal 是这个请求自己的
+  const handler = createMcpHandler(() =>
+    buildMcpServer({
+      ...context,
+      signal: controller.signal,
+      onProviderCall: () => {
+        providerCalled = true;
+      },
+    }),
+  );
   try {
-    await server.connect(transport);
-    await transport.handleRequest(request, response);
+    const body = await readBody(request, maxBytes);
+    const reply = await handler.fetch(
+      new Request(new URL(request.url, "http://flyai"), {
+        method: request.method,
+        headers: webHeaders(request.headers),
+        body,
+        signal: controller.signal,
+      }),
+    );
+    const payload = Buffer.from(await reply.arrayBuffer());
+    const headers = Object.fromEntries(reply.headers);
+    if (!providerCalled) headers["x-upstream-calls"] = "0";
+    response.writeHead(reply.status, headers);
+    response.end(payload);
   } finally {
     response.off("close", abortOnClose);
-    await transport.close().catch(() => {});
-    await server.close().catch(() => {});
+    await handler.close().catch(() => {});
   }
 }

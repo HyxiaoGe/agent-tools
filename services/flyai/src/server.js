@@ -203,7 +203,12 @@ export function createAdapterServer({
         return;
       }
       try {
-        await handleMcpRequest(request, response, { gate, scope, execute, clock, log, queueTimeoutMs: mcpQueueTimeoutMs });
+        await handleMcpRequest(
+          request,
+          response,
+          { gate, scope, execute, clock, log, queueTimeoutMs: mcpQueueTimeoutMs },
+          { maxBytes: MAX_MCP_REQUEST_BYTES },
+        );
       } catch (error) {
         log(`flyai_mcp_request_failed ${error?.stack ?? error}`);
         sendError(response, "internal_error");

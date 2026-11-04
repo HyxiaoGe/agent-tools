@@ -12,7 +12,10 @@
   },
   "dependencies": {
     "@fly-ai/flyai-cli": "1.0.16",
-    "@modelcontextprotocol/sdk": "1.32.1",
+    "@modelcontextprotocol/server": "2.4.0",
     "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0"
   }
 }
