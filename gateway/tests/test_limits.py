@@ -17,7 +17,7 @@ from app.usage import UsageRecord, UsageStore
 pytestmark = pytest.mark.anyio
 
 FUSION_KEY = "fusion-test-key"
-SERVICES = ("image", "search", "reader", "trends", "amap", "context7", "weather", "flyai", "tmap")
+SERVICES = ("image", "search", "reader", "trends", "amap", "context7", "weather", "flyai", "tmap", "maps")
 INITIALIZE = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
 TOOL_CALL = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_latest_news"}}
 

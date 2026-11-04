@@ -1,0 +1,32 @@
+[project]
+name = "agent-tools-maps"
+version = "0.1.0"
+description = "地图组合层：直接调高德、腾讯的 Web 服务，给产品的模型提供地点搜索和路线对比两个 MCP 工具，高德不行时转腾讯"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
+    "httpx>=0.28.0",
+    "pydantic-settings>=2.6.0",
+    "fastmcp>=4.1,<5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "anyio>=4.0.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# 给模型看的说明按段落写成长行，不折行
+"app/mcp_server.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
