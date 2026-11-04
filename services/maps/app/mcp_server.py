@@ -1,7 +1,7 @@
 """MCP 工具 place_search、route_compare：产品经网关 /maps/mcp 给自己的模型用，逻辑见 app/tools.py。
 
 说明（英文，模型看的）写在这里，两个产品共用，以 Fusion 的说明为底（runtime_prompts.toml 的 [amap]），Fusion 磨出来的规矩都带上：
-用户限定了区就每次搜索都带上、没有就如实说（Fusion 16df25f5）；参考消费不是人均；不给坐标；重名的四种情况（30efef77）；
+用户限定了区就每次搜索都带上、没有就如实说（Fusion 16df25f5）；不给坐标；重名的四种情况（30efef77）；
 出发时间只记用户原话、不按那个时刻算（8137c527）；公交不给总距离。
 产品专有的话由产品接在后面：回答风格（不用表格、不提服务商名字）、结果怎么显示、和别的工具怎么配合（Fusion 的航班、火车站换乘那段）。
 所以这里不点名别的工具、不提卡片、不写工具自己的名字（产品可能改名）。
@@ -47,14 +47,13 @@ Arguments:
 - Separate alternative search terms with | or commas; spaces remain part of the query rather than meaning OR.
 
 The result is JSON:
-- places: each has place_id and name, and when available address, district, city, category, distance_m (from the anchor), rating (out of 5), reference_cost_yuan, open_hours and business_area. A place may lack fields another place has.
+- places: each has place_id and name, and when available address, district, city, category, distance_m (from the anchor), rating (out of 5), reference_cost_yuan (the average spending per person listed by the map provider, not a real-time price), open_hours and business_area. A place may lack fields another place has.
 - anchor: the resolved anchor when anchor_source is named or current_location.
-- limitations: reference_cost_not_per_person means reference_cost_yuan is reference spending, not per-person spending or a real-time price; first_term_only means only the first alternative search term was searched.
+- limitations: first_term_only means only the first alternative search term was searched.
 
 Using the result:
 - Refer only to places actually returned and fields actually returned for them; do not introduce a place absent from places. When a field the answer depends on is missing, say this query's results cannot confirm it; do not guess or fill it in.
-- Do not infer real-time queues, availability, reservations, per-person or group budgets, walking time between places, or distance between places. Do not describe places as adjacent, on the way, or near each other unless returned fields show it, and do not infer attributes such as taste or merchant density from a place name or address.
-- Do not use reference_cost_yuan to calculate individual or group budgets.
+- Do not infer real-time queues, availability, reservations, walking time between places, or distance between places. Do not describe places as adjacent, on the way, or near each other unless returned fields show it, and do not infer attributes such as taste or merchant density from a place name or address.
 - Discuss a place's distance only when it returned distance_m, and only as the distance from this query's anchor, never between places.
 - Keep comparisons and superlatives within the returned places; do not turn them into citywide or general claims.
 - To get a route to or from a returned place, use its place_id together with its returned name.
@@ -77,9 +76,9 @@ The result is JSON:
 
 Using the result:
 - Refer only to routes and fields actually returned; do not introduce an absent route or transport mode. When a field the answer depends on is missing, say this query's results cannot confirm it; do not guess or fill it in.
-- Times and distances are from this query only and do not reflect real-time traffic. Do not estimate route time, distance, fares or tolls beyond returned values. For transit use only the returned transit_type, transfers, legs, fare_yuan and alternatives; do not guess missing lines, stops, entrances, exits or walking distances. Transit has no total distance; do not derive one.
+- Driving durations are estimated from traffic at the time of this query. Do not estimate route time, distance, fares or tolls beyond returned values. For transit use only the returned transit_type, transfers, legs, fare_yuan and alternatives; do not guess missing lines, stops, entrances, exits or walking distances. Transit has no total distance; do not derive one.
 - fare_yuan is the reference fare the map data gives for the plan; do not present it as exact or apply discounts.
-- When requested_departure_time was passed, clearly state that the routes were not calculated from real-time traffic or schedules at that time, and do not infer an arrival time.
+- When requested_departure_time was passed, clearly state that the routes were calculated for the time of this query, not for that time, and do not infer an arrival time.
 
 On failure the result has ok=false and says what to do next. In every case, do not fabricate route facts."""
 

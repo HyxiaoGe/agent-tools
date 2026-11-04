@@ -583,8 +583,6 @@ class MapsService:
             provider, places = await call.first(lambda c: c.text_search(terms, args.city))
         places = places[: args.limit]
         limitations = []
-        if any(place.reference_cost_yuan is not None for place in places):
-            limitations.append("reference_cost_not_per_person")
         if provider == TMAP and len(terms) > 1:
             limitations.append("first_term_only")
         result: dict[str, Any] = {
