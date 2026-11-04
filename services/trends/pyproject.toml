@@ -1,0 +1,26 @@
+[project]
+name = "agent-tools-trends"
+version = "0.1.0"
+description = "TrendRadar 官方 MCP 的契约补齐层；运行依赖都在上游镜像里，这里只为测试和检查"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试里的期望值按一行写，便于对照
+"tests/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
