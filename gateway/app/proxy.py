@@ -244,7 +244,9 @@ async def forward(
 
     async def body_stream():
         # 服务声明没调上游时记为 rejected；中途读失败仍按 timeout / unreachable 记。
-        outcome = "rejected" if upstream_response.headers.get(NO_UPSTREAM_CALL_HEADER) == "0" else "ok"
+        # 只看真正的调用：MCP 握手本来就没调上游（flyai 握手也带这个头），记成 rejected 会在用量报表里算成失败。
+        declared = upstream_response.headers.get(NO_UPSTREAM_CALL_HEADER) == "0"
+        outcome = "rejected" if declared and counts_as_call(service, path, tool) else "ok"
         try:
             async for chunk in upstream_response.aiter_raw():
                 yield chunk
