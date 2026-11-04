@@ -227,7 +227,7 @@ async def test_tool_only_exposes_what_the_model_should_fill(app):
     async with Client(owned_mcp) as c:
         (tool,) = await c.list_tools()
 
-    props = tool.inputSchema["properties"]
+    props = tool.input_schema["properties"]
     assert set(props) == {
         "prompt",
         "aspect_ratio",
@@ -237,7 +237,15 @@ async def test_tool_only_exposes_what_the_model_should_fill(app):
         "quality",
         "source_image_id",
     }
-    assert tool.inputSchema["required"] == ["prompt"]
+    assert tool.input_schema["required"] == ["prompt"]
+    # 出图要花钱、每次结果不同、调外部模型
+    hints = tool.annotations
+    assert (hints.read_only_hint, hints.destructive_hint, hints.idempotent_hint, hints.open_world_hint) == (
+        False,
+        False,
+        False,
+        True,
+    )
     ratios = next(o["enum"] for o in props["aspect_ratio"]["anyOf"] if "enum" in o)
     assert tuple(ratios) == tool_aspect_ratios(app.state.settings)
 
@@ -296,3 +304,21 @@ async def test_v2_over_http(app, client, fake_redis, monkeypatch):
             },
         )
         assert called.status_code == 200 and '"ok":true' in called.text.replace(" ", "")
+
+
+@pytest.mark.parametrize("path", ["/mcp", "/v2/mcp"])
+async def test_old_protocol_clients_still_handshake(app, client, fake_redis, monkeypatch, path):
+    """服务升到新协议（2026-07-28）以后，按旧协议 initialize 的客户端（Fusion 自己写的、Claude Code）照样连得上。"""
+    monkeypatch.setattr("src.main.aioredis.from_url", lambda *a, **kw: fake_redis)
+    headers = {"Accept": "application/json, text/event-stream"}
+    body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "old", "version": "1"}},
+    }
+    async with app.router.lifespan_context(app):
+        response = await client.post(path, headers=headers, json=body)
+    assert response.status_code == 200, response.text
+    assert '"protocolVersion":"2025-06-18"' in response.text.replace(" ", "")
+    assert '"name":"image-service"' in response.text.replace(" ", "")

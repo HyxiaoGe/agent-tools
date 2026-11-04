@@ -13,7 +13,7 @@ import anyio
 import httpx
 import pytest
 from fastmcp import Client
-from mcp.server.lowlevel.server import request_ctx
+from fastmcp.server.dependencies import fastmcp_request_ctx
 
 from mcp import types
 from src.mcp.server import init_mcp
@@ -48,8 +48,10 @@ class BlockingTransport(httpx.AsyncBaseTransport):
         if self.download and request.method == "POST":
             return httpx.Response(200, json=QWEN_OK)
         if len(self.calls) == 1 or self.block_all or str(request.url) == QWEN_RESULT_URL:
-            with suppress(LookupError):
-                self.mcp_request_id = request_ctx.get().request_id
+            ctx = fastmcp_request_ctx.get()
+            if ctx is not None:  # REST 请求上没有 MCP 上下文
+                # 取 SDK 原样的 id（fastmcp 包装里转成了字符串），取消通知按它对上请求
+                self.mcp_request_id = ctx._srctx.request_id
             self.started.set()
             try:
                 await anyio.sleep_forever()
@@ -343,13 +345,11 @@ async def test_mcp_cancellation_notification_stops_tool_and_cleans_lock(budget_a
         try:
             await asyncio.wait_for(transport.started.wait(), 1)
             await client.session.send_notification(
-                types.ClientNotification(
-                    types.CancelledNotification(
-                        method="notifications/cancelled",
-                        params=types.CancelledNotificationParams(
-                            requestId=transport.mcp_request_id, reason="user stopped"
-                        ),
-                    )
+                types.CancelledNotification(
+                    method="notifications/cancelled",
+                    params=types.CancelledNotificationParams(
+                        request_id=transport.mcp_request_id, reason="user stopped"
+                    ),
                 )
             )
             await asyncio.wait_for(transport.cancelled.wait(), 0.5)

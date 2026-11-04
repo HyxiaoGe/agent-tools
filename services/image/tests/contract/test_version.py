@@ -22,5 +22,6 @@ async def test_release_version_matches_package_health_openapi_and_mcp(client, ap
     openapi = await client.get("/openapi.json")
     assert health.json()["version"] == openapi.json()["info"]["version"] == __version__
     async with Client(app.state.mcp) as mcp_client:
-        assert mcp_client.initialize_result.serverInfo.version == __version__
-        assert "edit existing images" in mcp_client.initialize_result.instructions
+        # 新协议（server/discover）没有 initialize_result，用两代协议都有的 server_info、instructions
+        assert mcp_client.server_info.version == __version__
+        assert "edit existing images" in mcp_client.instructions

@@ -115,8 +115,8 @@ async def test_mcp_exposes_optional_quality_enum_and_selection_guidance(app):
     async with Client(app.state.mcp) as mcp_client:
         tools = await mcp_client.list_tools()
     tool = next(t for t in tools if t.name == "generate_image")
-    assert "quality" not in tool.inputSchema["required"]
-    quality_schema = tool.inputSchema["properties"]["quality"]
+    assert "quality" not in tool.input_schema["required"]
+    quality_schema = tool.input_schema["properties"]["quality"]
     assert any(s.get("enum") == ["standard", "high"] for s in quality_schema["anyOf"])
     description = " ".join(quality_schema["description"].split())
     assert "Explicit model takes priority" in description
