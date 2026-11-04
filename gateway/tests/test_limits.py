@@ -393,6 +393,30 @@ async def test_service_declared_no_upstream_call_is_not_counted(tmp_path):
     assert [r["outcome"] for r in usage_rows(settings)] == ["rejected", "rejected", "ok", "limited"]
 
 
+def _handshake_without_upstream() -> httpx.Response:
+    # flyai 的握手、列工具也带 x-upstream-calls: 0
+    return httpx.Response(
+        200, stream=httpx.ByteStream(b"{}"), headers={"content-type": "application/json", "x-upstream-calls": "0"}
+    )
+
+
+async def test_mcp_handshake_with_the_declaration_is_recorded_ok(tmp_path):
+    settings = make_settings(tmp_path, "flyai=1")
+    gateway = App(settings, [_handshake_without_upstream, _rejected_by_service])
+    async with gateway as http:
+        await http.post("/flyai/mcp", headers=auth(), json=INITIALIZE)
+        await http.post("/flyai/mcp", headers=auth(), json=TOOL_CALL)
+        last = await http.post("/flyai/mcp", headers=auth(), json=TOOL_CALL)
+
+    # 握手不是调用，照常记 ok；被服务拒的工具调用记 rejected、不占上限
+    assert [(r["tool"], r["outcome"]) for r in usage_rows(settings)] == [
+        (None, "ok"),
+        ("get_latest_news", "rejected"),
+        ("get_latest_news", "ok"),
+    ]
+    assert last.status_code == 200
+
+
 async def test_failures_without_the_declaration_still_count(tmp_path):
     gateway = App(make_settings(tmp_path, "reader=1"), [_page_not_found])
     async with gateway as http:
