@@ -23,6 +23,7 @@ from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import Annotated, Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastmcp import FastMCP
@@ -45,6 +46,7 @@ DEFAULT_COUNT = 10
 MAX_RECENCY_DAYS = 365
 MAX_DOMAINS = 5
 SNIPPET_CHARS = 1000
+BEIJING = ZoneInfo("Asia/Shanghai")
 # recency_days 向上取到这几档（搜索服务只认 Brave 风格的天、周、月、年）
 WINDOWS = ((1, "pd"), (7, "pw"), (31, "pm"), (365, "py"))
 
@@ -204,8 +206,17 @@ def tidy_title(title: str) -> str:
     return _REPEAT.sub(r"\g<t>", title.strip(), count=1)
 
 
+def _midnight(moment: datetime) -> bool:
+    return (moment.hour, moment.minute, moment.second, moment.microsecond) == (0, 0, 0, 0)
+
+
 def published(value: Any) -> str | None:
-    """上游明确给的、认得出的日期：ISO 8601 或 RFC 2822。整点零时的只留日期。“3 天前”这类相对说法不给，不推断。"""
+    """上游明确给的、认得出的日期：ISO 8601 或 RFC 2822。“3 天前”这类相对说法不给，不推断。
+
+    只精确到天的日期，上游常写成某个时区的零点。UTC 零点、北京时间零点的只给那一天的日期：
+    DeepSeek 给的是北京日期换成 UTC（“2026-11-02T16:00:00+00:00”是北京 11-03），原样给模型会读成早一天
+    （11-04 对了两篇网易文章，页面上分别是 11-03、10-30）。
+    """
     if not isinstance(value, str) or not value.strip():
         return None
     text = value.strip()
@@ -216,8 +227,10 @@ def published(value: Any) -> str | None:
             moment = parsedate_to_datetime(text)
         except (TypeError, ValueError, IndexError):
             return None
-    if (moment.hour, moment.minute, moment.second, moment.microsecond) == (0, 0, 0, 0):
+    if _midnight(moment):
         return moment.date().isoformat()
+    if moment.tzinfo is not None and _midnight(beijing := moment.astimezone(BEIJING)):
+        return beijing.date().isoformat()
     return moment.isoformat(timespec="minutes")
 
 
