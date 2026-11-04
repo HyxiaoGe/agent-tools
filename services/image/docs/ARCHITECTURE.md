@@ -60,6 +60,15 @@ Mounted at `/mcp` (stateless HTTP). Two tools:
 - `generate_image` -- same flow as REST, returns text summary with full URL
 - `list_models` -- returns available model list
 
+Mounted at `/v2/mcp` (stateless HTTP, `src/mcp/owned.py`), for products' own models:
+- `generate_image` -- same generation flow with `OwnedTarget`: the image is saved by
+  `services/image_store.py` (private dir + sqlite record owned by the caller's product),
+  not in the static dir; the result carries the image id, mime and size but no URL.
+  Edits take `source_image_id` (the caller's own image, read locally). Cache entries are
+  separate from the legacy ones, and a hit is copied under a new id.
+- Images are fetched / deleted with `GET` / `DELETE /v1/images/{id}` (`api/images.py`),
+  owner product only.
+
 `DisconnectMiddleware` is a plain ASGI wrapper with a bounded request-body relay.
 It observes disconnects without competing with body / SSE readers, and attaches a
 shared `RequestLifetime` to request state. REST and MCP pass that lifetime into the

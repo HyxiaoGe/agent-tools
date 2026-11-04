@@ -22,7 +22,7 @@ class DisconnectMiddleware:
         if (
             scope["type"] != "http"
             or scope["method"] != "POST"
-            or scope["path"].rstrip("/") not in {"/v1/generate", "/mcp"}
+            or scope["path"].rstrip("/") not in {"/v1/generate", "/mcp", "/v2/mcp"}
         ):
             await self.app(scope, receive, send)
             return

@@ -90,7 +90,7 @@ def collect_day_stats(db_path: str, day: date) -> DayStats:
     finally:
         conn.close()
     for service, app_id, path, tool, requests, failed, limited in rows:
-        if not counts_as_call(path, tool):
+        if not counts_as_call(service, path, tool):
             continue
         svc = stats.services[service]
         svc.calls += requests

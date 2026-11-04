@@ -102,6 +102,8 @@ def _seed(settings: Settings) -> None:
         _record(store, "2026-10-31T05:00:00+00:00", "image", "/mcp/", app_id="validation")
     _record(store, "2026-10-31T05:00:00+00:00", "image", "/mcp/", tool="generate_image", app_id="lingdraft")
     _record(store, "2026-10-31T05:00:00+00:00", "image", "/v1/generate")
+    # 按 id 取、删存着的图不算调用
+    _record(store, "2026-10-31T05:00:00+00:00", "image", "/v1/images/3f0e8a4c-0000-4000-8000-000000000000")
     _record(store, "2026-10-31T06:00:00+00:00", "tmap", "/mcp", tool="placeSuggestion")
     _record(store, "2026-10-31T06:00:00+00:00", "tmap", "/mcp", tool="placeSuggestion")
     _record(store, "2026-10-31T06:00:00+00:00", "tmap", "/mcp", tool="placeSearchNearby")

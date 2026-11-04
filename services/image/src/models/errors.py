@@ -22,6 +22,8 @@ class ErrorCode(StrEnum):
     RATE_LIMITED = "rate_limited"
     ADMISSION_UNAVAILABLE = "admission_unavailable"
     QUOTA_EXCEEDED = "quota_exceeded"
+    SOURCE_IMAGE_UNAVAILABLE = "source_image_unavailable"
+    IMAGE_NOT_FOUND = "image_not_found"
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,11 @@ ERROR_SPECS: dict[ErrorCode, ErrorSpec] = {
     ErrorCode.QUOTA_EXCEEDED: ErrorSpec(
         429, False, "The daily quota for this model's provider is used up; it resets at 00:00 Asia/Shanghai."
     ),
+    # /v2/mcp 改图：source_image_id 不是本产品的图（不存在、删了、别的产品的、格式不对都一样，不透露是哪种）。
+    ErrorCode.SOURCE_IMAGE_UNAVAILABLE: ErrorSpec(
+        404, False, "The image to edit was not found among this product's images."
+    ),
+    ErrorCode.IMAGE_NOT_FOUND: ErrorSpec(404, False, "Image not found."),
 }
 
 

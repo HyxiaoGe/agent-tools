@@ -10,9 +10,11 @@ from fastapi import FastAPI
 
 from src.config import ProductConfig, Settings
 from src.main import create_app
+from src.mcp.owned import init_owned_mcp
 from src.mcp.server import init_mcp, mcp
 from src.models.identity import CallerIdentity
 from src.services.cache import CacheService
+from src.services.image_store import ImageStore
 
 # A minimal 1x1 red PNG for test fixtures
 FAKE_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8BQDwAEgAF/pooBPQAAAABJRU5ErkJggg=="
@@ -138,6 +140,10 @@ def app(settings: Settings, fake_redis, mock_transport: MockTransport, monkeypat
     application.state.http_client = mock_http
     application.state.mcp = mcp
     init_mcp(settings, cache_service, http_client=mock_http)
+    application.state.image_store = ImageStore(
+        Path(settings.storage_dir).parent / "owned", Path(settings.storage_dir).parent / "images.sqlite3"
+    )
+    init_owned_mcp(settings, cache_service, application.state.image_store, http_client=mock_http)
 
     return application
 

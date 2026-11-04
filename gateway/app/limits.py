@@ -1,6 +1,7 @@
 """按服务的每日调用上限（北京时间自然日），兜底防止批量实验或失控循环把付费上游打穿。
 
-- 只算真正的调用：REST 请求和 MCP tools/call；MCP 握手（initialize、tools/list、SSE）不算也不拦。
+- 只算真正的调用：REST 请求和 MCP tools/call；MCP 握手（initialize、tools/list、SSE）、
+  按 id 取删 image-service 的图（/image/v1/images/...）不算也不拦（见 proxy.counts_as_call）。
 - 计数在内存里（网关单进程）；每天第一次用到时从用量记录补回当天已有的调用数，重启不清零。
   被拦下的请求以 outcome=limited 记账，不计入调用数。
 - 用到 alert_ratio 和用满时各推一次飞书巡检群（每个服务每天各一次）。

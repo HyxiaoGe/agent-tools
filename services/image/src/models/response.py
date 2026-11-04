@@ -26,6 +26,37 @@ class GenerateResponse(BaseModel):
     reference_search: ReferenceSearchInfo | None = None  # only when reference_subject was set
 
 
+class StoredImage(BaseModel):
+    """/v2/mcp 出的一张图：存在服务里、归调用方产品，按 id 取（GET /v1/images/{id}），不给地址。"""
+
+    id: str
+    mime_type: str  # image/png、image/jpeg、image/webp
+    width: int
+    height: int
+    bytes: int
+    model: str  # 实际出图的模型；缓存命中时是当初出图的模型
+    edited_from: str | None = None  # 改的是哪张（服务自己的图片 id）
+    created_at: str
+
+
+class StoredGenerateResult(BaseModel):
+    image: StoredImage
+    requested_model: str
+    fallback_used: bool = False
+    grounding_used: bool = False
+    cached: bool = False  # 命中缓存：复制了一份，id 是新的
+    reference_search: ReferenceSearchInfo | None = None
+
+    # handle_generate 记日志、记账时和 GenerateResponse 一样取这两个
+    @property
+    def id(self) -> str:
+        return self.image.id
+
+    @property
+    def model(self) -> str:
+        return self.image.model
+
+
 class ModelInfoResponse(BaseModel):
     id: str
     name: str
