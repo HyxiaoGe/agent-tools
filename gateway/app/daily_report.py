@@ -26,7 +26,7 @@ from pathlib import Path
 import httpx
 
 from app.config import Settings
-from app.feishu import send_feishu_text
+from app.feishu import send_feishu_card
 from app.proxy import counts_as_call
 
 logger = logging.getLogger("gateway")
@@ -308,8 +308,8 @@ async def fetch_upstream_summary(client: httpx.AsyncClient | None, service: str,
     return data
 
 
-async def build_report(settings: Settings, clients: Mapping[str, httpx.AsyncClient], day: date) -> str:
-    """clients：服务名 → 指向该服务的 client（网关转发用的同一批）。"""
+async def _collect_report_data(settings: Settings, clients: Mapping[str, httpx.AsyncClient], day: date):
+    """读取同一份数据，供完整文本明细和群内简报共用。"""
     stats, previous = await asyncio.gather(
         asyncio.to_thread(collect_day_stats, settings.usage_db_path, day),
         asyncio.to_thread(collect_day_stats, settings.usage_db_path, day - timedelta(days=1)),
@@ -318,19 +318,136 @@ async def build_report(settings: Settings, clients: Mapping[str, httpx.AsyncClie
     summaries = await asyncio.gather(*(fetch_upstream_summary(clients.get(s), s, day) for s in services))
     by_service = dict(zip(services, summaries, strict=True))
     search_summary = by_service.pop("search")
+    return stats, previous, search_summary, by_service
+
+
+async def build_report(settings: Settings, clients: Mapping[str, httpx.AsyncClient], day: date) -> str:
+    stats, previous, search_summary, by_service = await _collect_report_data(settings, clients, day)
     return render_report(stats, previous, search_summary, settings.daily_limits(), by_service)
+
+
+def _card_name(value: str) -> str:
+    return " ".join(value.split())[:48].replace("<", "&lt;").replace(">", "&gt;")
+
+
+def render_report_card(
+    stats: DayStats,
+    previous: DayStats | None,
+    search_summary: dict | None,
+    upstream_summaries: Mapping[str, dict | None],
+) -> dict:
+    """群内只展示概况和最多三项昨日关注，完整统计仍可独立查询。"""
+    attention = []
+    for name, svc in sorted(stats.services.items(), key=lambda item: (-item[1].failed, -item[1].limited, item[0])):
+        parts = []
+        if svc.failed:
+            parts.append(f"失败 {svc.failed:,}/{svc.calls:,}")
+        if svc.limited:
+            parts.append(f"网关额度拦截 {svc.limited:,} 次")
+        if parts:
+            attention.append(f"{_card_name(name)}：" + "，".join(parts))
+    summaries = {"search": search_summary, **upstream_summaries}
+    ratios = []
+    for name, summary in summaries.items():
+        if summary is None or not summary.get("available", False):
+            attention.append(f"{_card_name(name)}：上游数据未取到")
+            continue
+        fallback = summary.get("fallback") or {}
+        if sum(fallback.values()):
+            attention.append(f"{_card_name(name)}：转备用 {sum(fallback.values()):,} 次")
+        quota_hits = sum(p.get("quota", 0) for p in summary.get("providers", []))
+        skipped = sum(p.get("skipped", 0) for p in summary.get("providers", []))
+        if quota_hits or skipped:
+            attention.append(f"{_card_name(name)}：上游额度用尽 {quota_hits:,} 次，跳过 {skipped:,} 次")
+        rejected = sum(p.get("rejected", 0) for p in summary.get("providers", []))
+        if rejected:
+            attention.append(f"{_card_name(name)}：上游额度拦截 {rejected:,} 次")
+        # 上游失败与网关失败的计数口径不同，明确标注，不能相加。
+        upstream_failed = summary.get("failed", 0) + sum(p.get("failed", 0) for p in summary.get("providers", []))
+        if upstream_failed:
+            attention.append(f"{_card_name(name)} 上游：失败 {upstream_failed:,} 次")
+        for provider in summary.get("providers", []):
+            used, limit = provider.get("used"), provider.get("limit")
+            if isinstance(used, (int, float)) and isinstance(limit, (int, float)) and limit > 0:
+                ratios.append((used / limit, name, provider["provider"], used, limit))
+    attention_text = "\n".join("• " + line for line in attention[:3]) or "昨日无失败或额度拦截"
+    if len(attention) > 3:
+        attention_text += f"\n另有 {len(attention) - 3} 项，已保留完整明细"
+    top = sorted(stats.services.items(), key=lambda item: (-item[1].calls, item[0]))
+    usage = " · ".join(f"{_card_name(name)} {svc.calls:,}" for name, svc in top[:3]) or "昨日无调用"
+    if len(top) > 3:
+        usage += f" · 另 {len(top) - 3} 项"
+    products = " · ".join(f"{_card_name(name)} {count:,}" for name, count in _ranked(stats.products)[:3])
+    quota = []
+    if ratios:
+        ratio, service, provider, used, limit = max(ratios)
+        quota.append(f"每日额度最高：{_card_name(service)}/{_card_name(provider)} {used:,}/{limit:,}（{ratio:.0%}）")
+    else:
+        quota.append("暂无有效的每日额度计数")
+    credits = (search_summary or {}).get("firecrawl_remaining_credits")
+    if credits is not None:
+        quota.append(f"Firecrawl 余额快照：{credits:,} credits")
+    success = f"{(stats.calls - stats.failed) / stats.calls:.1%}" if stats.calls else "—"
+    overview = [
+        ("昨日调用", f"{stats.calls:,} 次"),
+        ("成功率", success),
+        ("昨日失败", f"{stats.failed:,} 次"),
+        ("网关限额拦截", f"{stats.limited:,} 次"),
+    ]
+
+    def div(text):
+        return {"tag": "div", "text": {"tag": "lark_md", "content": text}}
+
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": f"📊 工具用量日报 · {stats.day.isoformat()}"},
+                "template": "blue",
+            },
+            "elements": [
+                {
+                    "tag": "div",
+                    "fields": [
+                        {"is_short": True, "text": {"tag": "lark_md", "content": f"**{label}**\n{value}"}}
+                        for label, value in overview
+                    ],
+                },
+                {"tag": "hr"},
+                div("**昨日关注**\n" + attention_text),
+                div("**主要用量**\n" + usage + ("\n**主要产品**\n" + products if products else "")),
+                div("**上游额度**\n" + "\n".join(quota)),
+                {
+                    "tag": "note",
+                    "elements": [
+                        {
+                            "tag": "plain_text",
+                            "content": "北京时间 · 昨日回顾；余额为采集时快照"
+                            + (f" · 前日 {previous.calls:,} 次调用" if previous else ""),
+                        }
+                    ],
+                },
+            ],
+        },
+    }
+
+
+async def build_report_card(settings: Settings, clients: Mapping[str, httpx.AsyncClient], day: date) -> dict:
+    stats, previous, search_summary, by_service = await _collect_report_data(settings, clients, day)
+    return render_report_card(stats, previous, search_summary, by_service)
 
 
 async def send_daily_report(
     settings: Settings, clients: Mapping[str, httpx.AsyncClient], day: date, *, test: bool = False
 ) -> bool:
-    text = await build_report(settings, clients, day)
+    card = await build_report_card(settings, clients, day)
     if test:
-        text = "【测试】" + text
-    ok = await send_feishu_text(
+        card["card"]["header"]["title"]["content"] = "【测试】" + card["card"]["header"]["title"]["content"]
+    ok = await send_feishu_card(
         settings.daily_report_webhook.get_secret_value().strip(),
         settings.daily_report_sign_secret.get_secret_value().strip(),
-        text,
+        card,
         purpose="daily_report",
     )
     if ok:
