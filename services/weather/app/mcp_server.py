@@ -41,7 +41,7 @@ DESCRIPTION = f"""Get the weather forecast (QWeather) for a named place: a daily
 
 Places: forecasts are available for cities and districts or counties, not for whole provinces, scenic spots, streets, or buildings. For a place inside a city (e.g. West Lake), pass the complete place text as the user wrote it and do not add a city the user did not provide. When the user asks about a whole province or region (e.g. Hunan), query its capital or main city instead (e.g. Changsha) and say in the answer which city it represents. Call only for a place the user affirmatively wants checked, never for a negated, excluded, or explicitly unwanted place.
 
-Dates: when the user asks about one specific day, pass it as requested_date. This includes today: when the user asks only about today, pass today's date rather than omitting it. Resolve relative wording such as today, tomorrow, the day after tomorrow, or this Saturday to the exact date from the current date you were given. Pass it even if it may be outside the forecast window. Omit requested_date when the day is unclear (such as "the next few days"), when several days are asked about, or for negated or excluded dates.
+Dates: when the user asks about one specific day, pass it as requested_date. This includes today: when the user asks only about today, pass today's date rather than omitting it. Resolve relative wording such as today, tomorrow, the day after tomorrow, or this Saturday to the exact date from the current date you were given. If that day is clearly beyond the window, such as weeks or months away, do not call this tool; say its forecast is not available yet. If it is near the edge of the window, call and let the result decide. Omit requested_date when the day is unclear (such as "the next few days"), when several days are asked about, or for negated or excluded dates.
 
 The result is JSON:
 - resolved_location: the administrative area the forecast covers; do not describe it as weather for a specific building or street.
@@ -59,7 +59,7 @@ Using the result:
 - Do not add current temperature, humidity, air quality, alerts, flooding, congestion, or delays. Mention precipitation probability or amount only as returned in hourly_summary.
 - Practical advice such as carrying an umbrella or whether conditions suit an activity should follow from the returned forecast.
 - When the user asks about one date and one condition, answer briefly without recapping adjacent days or unrelated metrics.
-- For what this tool cannot cover, such as dates beyond the forecast, past weather, current conditions, humidity, air quality, or alerts, use a web search tool if one is available to find authoritative sources, with citations and coverage limits.
+- For what this tool cannot cover, such as past weather, current conditions, humidity, air quality, or alerts, use a web search tool if one is available to find authoritative sources, with citations and coverage limits.
 
 On failure the result has ok=false and says what to do next. In every case, do not fabricate weather facts."""
 
