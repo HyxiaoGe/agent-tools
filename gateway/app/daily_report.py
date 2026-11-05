@@ -352,6 +352,13 @@ def render_report_card(
         if summary is None or not summary.get("available", False):
             attention.append(f"{_card_name(name)}：上游数据未取到")
             continue
+        fallback = summary.get("fallback") or {}
+        if sum(fallback.values()):
+            attention.append(f"{_card_name(name)}：转备用 {sum(fallback.values()):,} 次")
+        quota_hits = sum(p.get("quota", 0) for p in summary.get("providers", []))
+        skipped = sum(p.get("skipped", 0) for p in summary.get("providers", []))
+        if quota_hits or skipped:
+            attention.append(f"{_card_name(name)}：上游额度用尽 {quota_hits:,} 次，跳过 {skipped:,} 次")
         rejected = sum(p.get("rejected", 0) for p in summary.get("providers", []))
         if rejected:
             attention.append(f"{_card_name(name)}：上游额度拦截 {rejected:,} 次")

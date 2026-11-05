@@ -57,3 +57,13 @@ def test_daily_quota_selects_largest_real_usage_ratio():
     text = str(card)
     assert "image/volcano 9/100（9%）" in text
     assert "unused" not in text
+
+
+def test_upstream_fallbacks_and_maps_quota_are_kept_in_attention():
+    stats = DayStats(date(2026, 11, 4), calls=10)
+    search = {"available": True, "providers": [], "fallback": {"error": 2, "insufficient": 8}}
+    maps = {"available": True, "providers": [{"provider": "amap", "quota": 1, "skipped": 2}]}
+    card = render_report_card(stats, None, search, {"maps": maps})
+    text = str(card)
+    assert "search：转备用 10 次" in text
+    assert "maps：上游额度用尽 1 次，跳过 2 次" in text
