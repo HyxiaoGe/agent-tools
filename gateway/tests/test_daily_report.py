@@ -383,7 +383,8 @@ async def test_run_due_report_sends_signed_message_once_per_day(settings, monkey
     assert len(feishu.posted) == 1
     sent = feishu.posted[0]
     assert sent["url"] == "https://open.feishu.cn/open-apis/bot/v2/hook/secret-token"
-    assert sent["json"]["content"]["text"].startswith("【agent-tools 日报】10-31")
+    assert sent["json"]["msg_type"] == "interactive"
+    assert "2026-10-31" in sent["json"]["card"]["header"]["title"]["content"]
     expected = base64.b64encode(
         hmac.new(f"{sent['json']['timestamp']}\nsign-secret".encode(), digestmod=hashlib.sha256).digest()
     ).decode()
@@ -428,7 +429,7 @@ async def test_manual_test_send_prefixes_title_and_does_not_touch_schedule_state
 
     assert await daily_report.send_daily_report(settings, _clients(client), DAY, test=True) is True
 
-    assert feishu.posted[0]["json"]["content"]["text"].startswith("【测试】【agent-tools 日报】10-31")
+    assert feishu.posted[0]["json"]["card"]["header"]["title"]["content"].startswith("【测试】📊 工具用量日报")
     assert not os.path.exists(settings.daily_report_state_path)
     await client.aclose()
 
@@ -436,3 +437,26 @@ async def test_manual_test_send_prefixes_title_and_does_not_touch_schedule_state
 def test_webhook_is_hidden_in_settings_repr(settings):
     assert "secret-token" not in repr(settings)
     assert "sign-secret" not in repr(settings)
+
+
+async def test_text_alerts_keep_original_payload(monkeypatch):
+    fake = FakeFeishu(monkeypatch)
+    assert await feishu.send_feishu_text("https://example.invalid/hook", "", "额度告警", purpose="limit")
+    assert fake.posted[0]["json"] == {"msg_type": "text", "content": {"text": "额度告警"}}
+
+
+async def test_card_sender_does_not_mark_missing_acknowledgement_success(monkeypatch):
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def post(self, url, json):
+            return httpx.Response(200, json={"msg": "没有业务回执"})
+
+    monkeypatch.setattr(feishu, "_feishu_client", Client)
+    card = {"msg_type": "interactive", "card": {}}
+    assert not await feishu.send_feishu_card("https://example.invalid/hook", "", card, purpose="daily_report")
+    assert "timestamp" not in card
