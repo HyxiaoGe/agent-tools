@@ -476,8 +476,12 @@ def test_description_is_product_neutral():
         "device",
     ):
         assert product_specific not in DESCRIPTION
-    for rule in ("not for whole provinces", "do not add a city the user did not provide", "Omit requested_date",
-                 "clearly beyond the window"):
+    for rule in (
+        "not for whole provinces",
+        "do not add a city the user did not provide",
+        "Omit requested_date",
+        "clearly beyond the window",
+    ):
         assert rule in DESCRIPTION
 
 
