@@ -63,7 +63,7 @@
 | REST | `POST /v1/generate`、`GET /v1/models`、`GET /v1/health` |
 | MCP | `generate_image`、`list_models`（路径 `/mcp`） |
 | 产品用的 MCP | `generate_image`（路径 `/v2/mcp`）：图存在服务里、归产品，按 id 取、删，见[产品用的生图工具](#产品用的生图工具v2mcp) |
-| 取图、删图 | `GET`、`DELETE /v1/images/{id}`（只认所属产品的密钥） |
+| 传图、取图、删图 | `POST /v1/images`（产品上传一张图，可以当 `source_image_id` 改）、`GET`、`DELETE /v1/images/{id}`（都只认所属产品的密钥） |
 | 费用查询 | `GET /v1/usage`（用量与标价估算）、`GET /v1/billing?bill_period=YYYY-MM`（官方月度分账） |
 | 每日额度 | `GET /v1/quota?day=YYYY-MM-DD`（各上游当天调用 / 被拦次数与上限，不需要密钥，见[每日上游额度](#每日上游额度)） |
 
@@ -268,7 +268,7 @@ Pro / Flash 不支持原生联网搜索，`grounding=true` 在这两个模型上
 
 Seedream Flash / Pro 均可在 `prompt` 中使用 `<point>x y</point>` 或 `<bbox>x1 y1 x2 y2</bbox>` 定位编辑区域，坐标相对于整张参考图归一化到 0–999。例如：`只编辑图1 <bbox>400 420 610 620</bbox> 区域，在杯身添加金色星标，尽量保留其他部分。` 依赖该坐标协议时建议设置 `fallback_model="none"`，避免跨供应商备用对语法的解释不同。
 
-坐标定位不是像素遮罩，不保证区域外像素完全不变。当前工具没有开放本地文件上传、`mask` / `strength`、多图层返回或透明输出控制。实测与能力边界见[编辑调研](docs/SEEDREAM_EDITING_RESEARCH.md)。
+坐标定位不是像素遮罩，不保证区域外像素完全不变。旧工具（`/mcp`、REST）没有开放本地文件上传（产品要改用户的图，先 `POST /v1/images` 传上来，再用 `/v2/mcp` 改），也没有 `mask` / `strength`、多图层返回或透明输出控制。实测与能力边界见[编辑调研](docs/SEEDREAM_EDITING_RESEARCH.md)。
 
 ## 产品用的生图工具（/v2/mcp）
 
@@ -281,6 +281,11 @@ Seedream Flash / Pro 均可在 `prompt` 中使用 `<point>x y</point>` 或 `<bbo
   - 结果里只有图片 id，没有地址。产品后端用自己的密钥 `GET /v1/images/{id}` 取图转给浏览器。返回带 `Cache-Control: private, max-age=31536000, immutable`，因为图不会变。
   - 别的产品的、不存在的一律 404，不透露有没有这张图。
   - 不自动清理。产品删对话时 `DELETE /v1/images/{id}`。删过再删、不是本产品的都回 204。
+- **产品可以上传图（`POST /v1/images`），再拿它的 id 改图。** 比如用户在对话里发一张照片说「照这张改」。
+  - 请求体就是图片本身，不用 multipart。类型按内容认，不看 `Content-Type`。
+  - 只收读得出宽高的 PNG、JPEG、WebP，不超过 4 MB。改图时原图以 base64 内联传给上游，和参考图同一个上限。超过回 413 `image_too_large`，认不出回 415 `unsupported_image`，都不落盘。
+  - 成功回 201 和这张图的信息（同取图的字段，`model` 是 `upload`）。和出的图放在同一个私有目录、同样归产品、同样不自动清理。
+  - 不调上游、不计费，不占服务里的限流，也不算网关的每日调用次数。
 - **只开放模型该填的参数。**
   - `prompt`（1–1000，全是空格算参数错）、`aspect_ratio`、`style`（≤60）、`quality`、`regenerate`、`reference_subject`（≤80）、`source_image_id`。
   - `grounding` 固定开，`regenerate` 就是 `no_cache`。

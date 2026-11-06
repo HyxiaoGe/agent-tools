@@ -24,6 +24,8 @@ class ErrorCode(StrEnum):
     QUOTA_EXCEEDED = "quota_exceeded"
     SOURCE_IMAGE_UNAVAILABLE = "source_image_unavailable"
     IMAGE_NOT_FOUND = "image_not_found"
+    IMAGE_TOO_LARGE = "image_too_large"
+    UNSUPPORTED_IMAGE = "unsupported_image"
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,11 @@ ERROR_SPECS: dict[ErrorCode, ErrorSpec] = {
         404, False, "The image to edit was not found among this product's images."
     ),
     ErrorCode.IMAGE_NOT_FOUND: ErrorSpec(404, False, "Image not found."),
+    # POST /v1/images 上传：超过大小上限、不是认得出宽高的 PNG / JPEG / WebP
+    ErrorCode.IMAGE_TOO_LARGE: ErrorSpec(413, False, "The image is larger than 4 MB."),
+    ErrorCode.UNSUPPORTED_IMAGE: ErrorSpec(
+        415, False, "The image must be a PNG, JPEG or WebP file with a readable size."
+    ),
 }
 
 
