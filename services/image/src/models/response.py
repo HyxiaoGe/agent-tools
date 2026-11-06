@@ -27,14 +27,14 @@ class GenerateResponse(BaseModel):
 
 
 class StoredImage(BaseModel):
-    """/v2/mcp 出的一张图：存在服务里、归调用方产品，按 id 取（GET /v1/images/{id}），不给地址。"""
+    """/v2/mcp 出的或产品上传（POST /v1/images）的一张图：存在服务里、归调用方产品，按 id 取（GET /v1/images/{id}），不给地址。"""
 
     id: str
     mime_type: str  # image/png、image/jpeg、image/webp
     width: int
     height: int
     bytes: int
-    model: str  # 实际出图的模型；缓存命中时是当初出图的模型
+    model: str  # 实际出图的模型；缓存命中时是当初出图的模型；上传的图是 upload
     edited_from: str | None = None  # 改的是哪张（服务自己的图片 id）
     created_at: str
 

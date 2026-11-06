@@ -9,7 +9,7 @@ AI image generation middleware. Wraps Google Gemini, Volcengine Seedream and Ali
 - `src/middleware/` -- auth (product service key)
 - `src/models/` -- Pydantic request/response schemas
 - `src/mcp/` -- FastMCP tool servers: `/mcp` (generate_image, list_models; legacy contract, public static URLs) and `/v2/mcp` (`owned.py`: generate_image for products, images stored per product, id only)
-- `src/services/image_store.py` -- `/v2/mcp` images: private dir + sqlite records (owner product, mime, size); fetched / deleted by id via `src/api/images.py` (`GET`/`DELETE /v1/images/{id}`, owner only)
+- `src/services/image_store.py` -- `/v2/mcp` images: private dir + sqlite records (owner product, mime, size); products can also upload one (`POST /v1/images`, PNG/JPEG/WebP ≤ 4 MB, `model` = `upload`) to edit it later; fetched / deleted by id via `src/api/images.py` (`GET`/`DELETE /v1/images/{id}`, owner only)
 - `src/config.py` -- Settings via pydantic-settings, supported model registry
 - `src/main.py` -- App factory, lifespan, CORS, static files, metrics endpoint
 

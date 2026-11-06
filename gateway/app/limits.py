@@ -3,7 +3,7 @@
 - 两层同时生效：按服务的总上限（SERVICE_DAILY_LIMITS，所有产品合计），和按产品的上限
   （PRODUCTS[*].daily_limits，几个产品共用一份付费额度时防止一个产品把全天额度用光）。
 - 只算真正的调用：REST 请求和 MCP tools/call；MCP 握手（initialize、tools/list、SSE）、
-  按 id 取删 image-service 的图（/image/v1/images/...）不算也不拦（见 proxy.counts_as_call）。
+  上传、按 id 取删 image-service 的图（/image/v1/images、/image/v1/images/...）不算也不拦（见 proxy.counts_as_call）。
 - 转发前先占一次；转发结束后不占上限的（网关连接池满没转出去、服务声明没调上游）退回去，
   口径见 proxy.consumes_quota。被拦下的请求以 outcome=limited 记账，也不占。
 - 计数在内存里（网关单进程）；每天第一次用到时从用量记录补回当天已占的次数，重启不清零。

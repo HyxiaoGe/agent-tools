@@ -322,3 +322,78 @@ async def test_old_protocol_clients_still_handshake(app, client, fake_redis, mon
     assert response.status_code == 200, response.text
     assert '"protocolVersion":"2025-06-18"' in response.text.replace(" ", "")
     assert '"name":"image-service"' in response.text.replace(" ", "")
+
+
+# ---- POST /v1/images：产品上传的图 ----
+
+
+async def test_uploaded_image_belongs_to_the_caller(app, client, other_product, tmp_storage):
+    data = png(1600, 900)
+
+    resp = await client.post("/v1/images", content=data, headers={"Content-Type": "application/octet-stream"})
+
+    assert resp.status_code == 201
+    image = resp.json()
+    assert uuid.UUID(image["id"])
+    assert (image["mime_type"], image["width"], image["height"], image["bytes"]) == ("image/png", 1600, 900, len(data))
+    assert (image["model"], image["edited_from"]) == ("upload", None)
+    assert list(tmp_storage.iterdir()) == []  # 不进公开的静态目录
+    fetched = await client.get(f"/v1/images/{image['id']}")
+    assert (fetched.status_code, fetched.content) == (200, data)
+    assert fetched.headers["content-type"] == "image/png"
+    assert (await client.get(f"/v1/images/{image['id']}", headers=other_product)).status_code == 404
+    assert (await client.delete(f"/v1/images/{image['id']}")).status_code == 204
+    assert (await client.get(f"/v1/images/{image['id']}")).status_code == 404
+
+
+async def test_uploaded_image_can_be_edited(app, client, mock_transport):
+    data = png(900, 1600)
+    image_id = (await client.post("/v1/images", content=data)).json()["id"]
+
+    result = await call(app, prompt="add a red scarf", source_image_id=image_id)
+
+    sc = result.structured_content
+    assert sc["ok"] is True and sc["image"]["edited_from"] == image_id
+    sent = sent_json(mock_transport)
+    assert sent["imageConfig"] == {"aspectRatio": "9:16"}
+    assert (
+        sent["messages"][0]["content"][1]["image_url"]["url"]
+        == "data:image/png;base64," + base64.b64encode(data).decode()
+    )
+
+
+async def test_upload_needs_a_product_key(client):
+    resp = await client.post("/v1/images", content=png(10, 10), headers={"Authorization": ""})
+    assert resp.status_code == 401
+
+
+@pytest.mark.parametrize("data", [b"", b"GIF89a" + b"\x00" * 20, b"\x89PNG\r\n\x1a\n" + b"\x00" * 4])
+async def test_upload_rejects_what_is_not_a_readable_image(app, client, data):
+    resp = await client.post("/v1/images", content=data)
+
+    assert resp.status_code == 415
+    assert resp.json()["error"] == "unsupported_image"
+    assert list(app.state.image_store.directory.glob("*")) == []
+
+
+async def test_upload_rejects_images_over_4_mb(app, client):
+    from src.api.images import MAX_UPLOAD_BYTES
+
+    big = png(4000, 3000) + b"\x00" * MAX_UPLOAD_BYTES
+
+    declared = await client.post("/v1/images", content=big)
+
+    async def chunks():  # 不带 Content-Length（分块传）也要卡住
+        for i in range(0, len(big), 1024 * 1024):
+            yield big[i : i + 1024 * 1024]
+
+    streamed = await client.post("/v1/images", content=chunks())
+
+    for resp in (declared, streamed):
+        assert resp.status_code == 413
+        assert resp.json()["error"] == "image_too_large"
+    assert list(app.state.image_store.directory.glob("*")) == []
+    exactly = png(10, 10)
+    assert (
+        await client.post("/v1/images", content=exactly + b"\x00" * (MAX_UPLOAD_BYTES - len(exactly)))
+    ).status_code == 201

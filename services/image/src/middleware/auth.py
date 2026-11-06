@@ -16,11 +16,11 @@ _CORRELATION_PATTERN = re.compile(r"[a-zA-Z0-9_.:-]{1,128}")
 _SCENES = frozenset({"chat_image", "image_edit", "validation"})
 
 
-_PROTECTED = frozenset({"/mcp", "/v2/mcp", "/v1/generate", "/v1/models", "/v1/usage", "/v1/billing"})
+_PROTECTED = frozenset({"/mcp", "/v2/mcp", "/v1/generate", "/v1/models", "/v1/usage", "/v1/billing", "/v1/images"})
 
 
 def _protected(path: str) -> bool:
-    # /v1/images/{id}：/v2/mcp 出的图，只有所属产品能取、能删
+    # /v1/images：产品上传的图；/v1/images/{id}：/v2/mcp 出的图和上传的图，只有所属产品能取、能删
     return path in _PROTECTED or path.startswith("/v1/images/")
 
 
