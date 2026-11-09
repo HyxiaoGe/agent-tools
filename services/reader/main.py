@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import quota
-from direct_read import read_direct
+from direct_read import DirectPage, DirectThin, read_direct
 from mcp_server import build_mcp
 
 
@@ -669,6 +669,7 @@ async def read_page(url: str, full: bool = False) -> ReadResponse:
     # 同时发出的读取方式各算一次尝试，Jina 另按自己的实际次数算。
     provider_attempts = 0
     jina = _JinaOutcome()
+    jina_task = None
     page_gone: int | None = None
     firecrawl_page_status: int | None = None
     pending = {direct_task} if direct_task is not None else set()
@@ -677,7 +678,7 @@ async def read_page(url: str, full: bool = False) -> ReadResponse:
             await asyncio.wait(pending, timeout=DIRECT_HEDGE_DELAY)
             if direct_task.done():
                 pending.discard(direct_task)
-                if (page := direct_task.result()) is not None:
+                if isinstance(page := direct_task.result(), DirectPage):
                     return respond(page.content, page.title, "direct", 1)
 
         if _firecrawl_pool:
@@ -691,10 +692,19 @@ async def read_page(url: str, full: bool = False) -> ReadResponse:
             provider_attempts += 1
             pending.add(tavily_task)
         # Jina 慢且不区分错误页，只在 Firecrawl 失败后兜底；没配 Firecrawl 时直接上。
-        jina_task = None
-        if firecrawl_task is None:
-            jina_task = asyncio.create_task(_read_with_jina(url, deadline, jina))
-            pending.add(jina_task)
+        # 直接抓取已经打开了页面、只是提不出正文（多半是脚本渲染的页面）时也直接上：页面不是错误页，
+        # 不用等 Firecrawl 判断；Firecrawl 对这类页面常常好几秒后才报错，再轮到 Jina 就超过总时限了
+        # （2026-11-09 今日头条文章：Firecrawl 5.8 秒报 500，Jina 只剩不到 4 秒没读完；给够时间 Jina 2 秒读到）。
+        def start_jina() -> None:
+            nonlocal jina_task
+            if jina_task is None:
+                jina_task = asyncio.create_task(_read_with_jina(url, deadline, jina))
+                pending.add(jina_task)
+
+        if firecrawl_task is None or (
+            direct_task is not None and direct_task.done() and isinstance(direct_task.result(), DirectThin)
+        ):
+            start_jina()
 
         while pending:
             remaining = deadline - _monotonic()
@@ -703,8 +713,11 @@ async def read_page(url: str, full: bool = False) -> ReadResponse:
             done, pending = await asyncio.wait(
                 pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
             )
-            if direct_task in done and (page := direct_task.result()) is not None:
-                return respond(page.content, page.title, "direct", 1)
+            if direct_task in done:
+                if isinstance(page := direct_task.result(), DirectPage):
+                    return respond(page.content, page.title, "direct", 1)
+                if isinstance(page, DirectThin):
+                    start_jina()
             if tavily_task in done and (extracted := tavily_task.result()) is not None:
                 return respond(extracted[0], extracted[1], "tavily", provider_attempts)
             if firecrawl_task in done:
@@ -716,8 +729,7 @@ async def read_page(url: str, full: bool = False) -> ReadResponse:
                     break
                 if isinstance(scraped, PageError):
                     firecrawl_page_status = scraped.status
-                jina_task = asyncio.create_task(_read_with_jina(url, deadline, jina))
-                pending.add(jina_task)
+                start_jina()
             if jina_task is not None and jina_task in done:
                 jina_task.result()
                 if jina.response is not None:

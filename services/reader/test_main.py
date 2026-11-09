@@ -1036,6 +1036,66 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.provider, "jina")
         self.assertEqual(response.attempts, 2)
 
+    async def test_thin_direct_page_starts_jina_without_waiting_for_firecrawl(self):
+        """直接抓取打开了页面但提不出正文（脚本渲染的页面）：Jina 和 Firecrawl 一起读，不等 Firecrawl 报错。"""
+        self.read_direct.return_value = direct_read.DirectThin()
+        self.client.post.side_effect = self._hang
+        self.client.get.return_value = self._jina_success()
+
+        with patch("main._firecrawl_pool", main.FirecrawlKeyPool(["fc-test"])):
+            response = await asyncio.wait_for(main.read_url(self.url), 1.0)
+
+        self.assertEqual(response.provider, "jina")
+        self.assertEqual(response.attempts, 2)
+        self.client.post.assert_awaited_once()
+
+    async def test_thin_direct_page_found_after_hedge_still_starts_jina(self):
+        async def late_thin(*_args):
+            await asyncio.sleep(0.05)
+            return direct_read.DirectThin()
+
+        self.read_direct.side_effect = late_thin
+        self.client.post.side_effect = self._hang
+        self.client.get.return_value = self._jina_success()
+
+        with (
+            patch("main.DIRECT_HEDGE_DELAY", 0.01),
+            patch("main._firecrawl_pool", main.FirecrawlKeyPool(["fc-test"])),
+        ):
+            response = await asyncio.wait_for(main.read_url(self.url), 1.0)
+
+        self.assertEqual(response.provider, "jina")
+
+    async def test_unopened_direct_page_still_waits_for_firecrawl_before_jina(self):
+        """直接抓取没打开页面（出错、4xx、不是 HTML）：照旧等 Firecrawl 失败了才用 Jina，Jina 分不清错误页。"""
+        self.client.post.side_effect = self._hang
+        self.client.get.return_value = self._jina_success()
+
+        with (
+            patch("main.READ_TOTAL_TIMEOUT", 0.2),
+            patch("main._firecrawl_pool", main.FirecrawlKeyPool(["fc-test"])),
+            self.assertRaises(HTTPException),
+        ):
+            await main.read_url(self.url)
+
+        self.client.get.assert_not_awaited()
+
+    async def test_thin_direct_page_reads_jina_once_when_firecrawl_fails_too(self):
+        self.read_direct.return_value = direct_read.DirectThin()
+        self.client.post.return_value = self._firecrawl_response("禁止访问", 403)
+
+        async def slow_jina(*_args, **_kwargs):
+            await asyncio.sleep(0.05)
+            return self._jina_success()
+
+        self.client.get.side_effect = slow_jina
+
+        with patch("main._firecrawl_pool", main.FirecrawlKeyPool(["fc-test"])):
+            response = await main.read_url(self.url)
+
+        self.assertEqual(response.provider, "jina")
+        self.assertEqual(self.client.get.await_count, 1)
+
     async def test_jina_error_page_is_not_used_as_content(self):
         self.client.post.return_value = self._firecrawl_response("禁止访问", 403)
         self.client.get.return_value = self._jina_error_page(403)
@@ -1417,9 +1477,11 @@ class DirectReadTests(unittest.IsolatedAsyncioTestCase):
         )
         self._html("news.example.com", "/short", "<html><body><p>Enable JavaScript and cookies</p></body></html>")
 
-        for path in ("/pdf", "/blocked", "/short"):
+        for path in ("/pdf", "/blocked"):
             with self.subTest(path=path):
                 self.assertIsNone(await direct_read.read_direct(f"https://news.example.com{path}", "d"))
+        # 打开了、只是提不出正文：告诉调用方，好让 Jina 不等 Firecrawl
+        self.assertIsInstance(await direct_read.read_direct("https://news.example.com/short", "d"), direct_read.DirectThin)
 
     async def test_oversized_body_is_abandoned(self):
         self._html("news.example.com", "/big")

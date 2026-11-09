@@ -7,7 +7,8 @@ HTML 后用 trafilatura 提取正文。抓取发生在 dev 内网，容器内 DN
 - 域名经 DoH 解析出真实地址，全部是公网地址才继续；
 - 直连已核验的 IP（TLS 仍按原域名校验证书），不再二次解析，避免解析被换成内网；
 - 不自动跟随跳转，每一跳都重新核验。
-任何一步不满足都返回 None，由调用方回退 Tavily/Jina。
+任何一步不满足都返回 None，由调用方回退 Tavily/Jina。页面打开了、只是提不出正文时返回 DirectThin，
+调用方据此让 Jina 不等 Firecrawl 就一起读（见 main.read_page）。
 """
 
 import asyncio
@@ -44,6 +45,11 @@ _DNS_RECORD_TYPES = {"A": 1, "AAAA": 28}
 class DirectPage:
     content: str
     title: str | None
+
+
+@dataclass
+class DirectThin:
+    """页面打开了（没跳转出错、2xx、是 HTML），正文提取太短：多半要靠脚本渲染（今日头条文章就是）或是拦截页。"""
 
 
 class DirectReadSkipped(Exception):
@@ -164,8 +170,8 @@ def _extract(html: bytes, url: str) -> DirectPage:
     return DirectPage(content=content, title=getattr(metadata, "title", None) or None)
 
 
-async def read_direct(url: str, domain: str) -> DirectPage | None:
-    """成功返回正文；不适用或失败返回 None，调用方据此回退。"""
+async def read_direct(url: str, domain: str) -> DirectPage | DirectThin | None:
+    """成功返回正文；页面打开了但提不出正文返回 DirectThin；不适用或失败返回 None。调用方据此回退。"""
     if not DIRECT_READ_ENABLED:
         return None
     started_at = time.monotonic()
@@ -191,4 +197,4 @@ async def read_direct(url: str, domain: str) -> DirectPage | None:
         kind,
         max(0, int((time.monotonic() - started_at) * 1000)),
     )
-    return None
+    return DirectThin() if kind == "extract_too_short" else None

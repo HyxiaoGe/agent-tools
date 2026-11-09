@@ -102,7 +102,7 @@
    代码块和标签页提取前先处理（`code_blocks.py`）：trafilatura 按 class 去噪，文档站包代码的 div 常带 scrollbar、button 这类词，整块代码被扔掉（docs.langchain.com 一页 27 段一段不剩），列表项里的代码被压成一行。所以每段代码先换成占位、提取完换回 Markdown 代码块（带页面标的语言、文件名）；标签页没选中的那几页也显示，页首加标签名。代码在侧栏、页脚这类被去掉的地方时照样不要。
 2. **1.5s 还没成功**（`DIRECT_HEDGE_DELAY`，直接抓取先失败则立即）：**同时请求 Firecrawl 和 Tavily**，直接抓取继续跑，谁先读到正文用谁。
 3. **Firecrawl 报原网页 404/410**：立即结束，返回 `page_not_found`，不再等其他方式。
-4. **Jina 只兜底**：Firecrawl 失败（超时、被拦截、原网页 403 等其他错误码、无正文、号池全部不可用）后才启动；没配 Firecrawl 时第 2 步直接带上 Jina。Jina 会把错误页包装成 200 返回，这里按它头部的 `Warning: Target URL returned error <状态码>` 识别，错误页不当正文。
+4. **Jina 只兜底**：Firecrawl 失败（超时、被拦截、原网页 403 等其他错误码、无正文、号池全部不可用）后才启动；没配 Firecrawl 时第 2 步直接带上 Jina。直接抓取打开了页面（2xx 的 HTML）、只是提不出正文时（多半是脚本渲染的页面，如今日头条文章）也直接带上：页面不是错误页，不必等 Firecrawl，它对这类页面常几秒后才报错，再轮到 Jina 就过了总时限。Jina 会把错误页包装成 200 返回，这里按它头部的 `Warning: Target URL returned error <状态码>` 识别，错误页不当正文。
 
 为什么 Firecrawl 为主：同一批 120 个网址实测，Firecrawl 中位 4.3s、Jina 8.6s，两者读到真正正文的页数相当；Firecrawl 会报告原网页状态码，Jina 读到的页里约一成是 404 等错误页。
 
