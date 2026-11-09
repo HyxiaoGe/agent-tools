@@ -1,0 +1,37 @@
+name: agent-tools-playground
+services:
+  playground:
+    build: .
+    image: ${AGENT_TOOLS_IMAGE:-agent-tools/playground:current}
+    container_name: agent-tools-playground
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - TZ=Asia/Shanghai
+      - FORWARDED_ALLOW_IPS=${PLAYGROUND_TRUSTED_PROXY_IP:-127.0.0.1}
+    ports:
+      - "127.0.0.1:8101:8101"
+    read_only: true
+    volumes:
+      - playground-data:/app/storage
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          pids: 64
+    restart: unless-stopped
+    networks: [middleware]
+
+volumes:
+  playground-data:
+
+networks:
+  middleware:
+    external: true
+    name: middleware_default
