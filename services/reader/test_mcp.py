@@ -30,11 +30,14 @@ The article body.
 """
 
 
-def _response(content: str, provider: str = "jina", title: str | None = "Example Article") -> main.ReadResponse:
+def _response(
+    content: str, provider: str = "jina", title: str | None = "Example Article", favicon: str | None = None
+) -> main.ReadResponse:
     return main.ReadResponse(
         url="https://example.com/a",
         title=title,
         content=content,
+        favicon=favicon,
         content_length=len(content),
         fetch_ms=120,
         attempts=1,
@@ -232,6 +235,19 @@ class ReadPageToolTests(unittest.IsolatedAsyncioTestCase):
         seen = json.loads(text)
         self.assertNotIn("meta", seen)
         self.assertEqual(seen["url"], "https://example.com/a")
+
+    async def test_favicon_goes_to_meta_and_not_to_the_model(self):
+        icon = "https://www.google.com/s2/favicons?sz=32&domain=example.com"
+        self.read.return_value = _response(WRAPPED, favicon=f" {icon} ")
+        text, data, _ = await self._call(url="https://example.com/a")
+        self.assertEqual(data["meta"]["favicon"], icon)
+        self.assertNotIn("favicon", json.loads(text))
+        self.assertNotIn(icon, text)
+        for bad in ("data:image/png;base64,AAAA", "https://example.com/" + "x" * mcp_server.FAVICON_MAX_CHARS, "  "):
+            with self.subTest(favicon=bad[:30]):
+                self.read.return_value = _response(WRAPPED, favicon=bad)
+                _, data, _ = await self._call(url="https://example.com/a")
+                self.assertNotIn("favicon", data["meta"])
 
     async def test_extracted_and_truncated_notes(self):
         self.read.return_value = _response("x" * 9000, provider="direct")

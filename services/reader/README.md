@@ -73,10 +73,10 @@
 
 ```json
 {"ok": true, "url": "...", "title": "...", "content": "...", "content_chars": 12034, "truncated": true,
- "extracted": true, "note": "...", "meta": {"provider": "direct", "attempts": 1, "fetch_ms": 900}}
+ "extracted": true, "note": "...", "meta": {"provider": "direct", "attempts": 1, "fetch_ms": 900, "favicon": "https://..."}}
 ```
 
-`truncated`、`extracted`（直接抓取、经正文提取的，表格列表可能缺，可用 `full_page=true` 再读）只在为真时出现，`note` 把它们写成给模型的一句话。给模型的文字是去掉 `meta` 的同一份 JSON。
+`truncated`、`extracted`（直接抓取、经正文提取的，表格列表可能缺，可用 `full_page=true` 再读）只在为真时出现，`note` 把它们写成给模型的一句话。`meta.favicon` 是站点图标（给产品画来源卡，只认 http(s)、不超过 500 字，没有就不给）。给模型的文字是去掉 `meta` 的同一份 JSON。
 
 失败：`{"ok": false, "error": {"code", "message", "retryable", "status"?}}`，`isError` 为 false，文字里写清下一步怎么做、不要编造页面内容。
 

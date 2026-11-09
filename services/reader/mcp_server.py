@@ -31,6 +31,7 @@ logger = logging.getLogger("reader_service")
 
 TOOL_NAME = "read_page"
 RETRYABLE_PAGE_STATUSES = {408, 425, 429}
+FAVICON_MAX_CHARS = 500
 
 DESCRIPTION = f"""Read one web page and get its text as Markdown, with its title.
 
@@ -138,6 +139,15 @@ def classify(exc: HTTPException) -> ToolResult:
     return failure("upstream_error", retryable=detail.get("retryable") is True)
 
 
+def _favicon(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > FAVICON_MAX_CHARS or urlsplit(text).scheme not in {"http", "https"}:
+        return None
+    return text
+
+
 def success(url: str, response: Any) -> ToolResult:
     try:
         text = page_text(response.content, response.title)
@@ -160,6 +170,9 @@ def success(url: str, response: Any) -> ToolResult:
     if notes:
         result["note"] = " ".join(notes)
     result["meta"] = {"provider": response.provider, "attempts": response.attempts, "fetch_ms": response.fetch_ms}
+    # 站点图标只放 meta，不进给模型的文字：模型用不上，产品画来源卡要。
+    if icon := _favicon(response.favicon):
+        result["meta"]["favicon"] = icon
     seen = {k: v for k, v in result.items() if k != "meta"}
     return ToolResult(content=json.dumps(seen, ensure_ascii=False), structured_content=result)
 
