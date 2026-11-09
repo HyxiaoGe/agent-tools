@@ -10,7 +10,8 @@
 
 参数（模型填）：
 
-- `location`：地名，1–120 字。不收坐标和 6 位行政区代码；当前位置不在模型参数里，坐标该由产品从可信来源给（Fusion 迁过来时再加）。
+- `location`：地名，1–120 字。不收坐标和 6 位行政区代码。
+- `location_source`：可选，默认 `named`。查设备当前位置时传 `current_location`，`location` 也写 `current_location`（两处对不上报参数错误，免得把“当前位置”当地名查）。坐标不在模型参数里，由产品放在 `tools/call` 的 `_meta["agent-tools/geolocation"]`（`{longitude, latitude, accuracy_m?}`，WGS84，和 maps 同一个键、同样的检查：越界或精度差过 50 公里当没给），服务按“经度,纬度”（两位小数）查最近的城市。
 - `requested_date`：可选，`YYYY-MM-DD`。用户问确定的一天时传，相对说法由模型按今天换算；超出预报范围也照传。
 
 服务里做的：
@@ -45,6 +46,7 @@
 |---|---|
 | `ambiguous_location` | 带候选；上下文清楚就用候选原文再查，否则问用户 |
 | `location_not_found` | 只查得到城市和区县；能从对话判断所属城市就再查，否则问用户 |
+| `location_unavailable` | 要查当前位置但产品没给设备位置：别说知道用户在哪，问用户在哪个城市再按地名查 |
 | `invalid_arguments` | 参数哪里不对 |
 | `not_configured`、`upstream_*`、`invalid_response`、`call_timeout` | 没有可用结果，按已有信息回答、不编造（不让模型把工具状态讲给用户） |
 

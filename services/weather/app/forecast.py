@@ -21,6 +21,7 @@ import math
 import re
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -50,6 +51,12 @@ _ADMIN_SUFFIXES = ("特别行政区", "维吾尔自治区", "壮族自治区", "
 _COORDINATES = re.compile(r"^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*$")
 _ADMIN_CODE = re.compile(r"^\d{6}$")
 _UTC_OFFSET = re.compile(r"^([+-])(\d{2}):(\d{2})$")
+NAMED = "named"
+CURRENT = "current_location"
+CURRENT_LOCATION_TEXTS = frozenset({CURRENT, "当前位置"})
+# 产品放设备位置的 _meta 键，和 maps 一样
+GEOLOCATION_META_KEY = "agent-tools/geolocation"
+MAX_ACCURACY_M = 50_000
 
 
 class ForecastError(Exception):
@@ -62,15 +69,56 @@ class ForecastError(Exception):
         self.detail = detail
 
 
-def parse_arguments(location: Any, requested_date: Any) -> tuple[str, date | None]:
-    """地名只收地名：不收坐标和行政区代码（坐标该由产品从可信来源给，不让模型填）；日期只收 YYYY-MM-DD。"""
+@dataclass(frozen=True)
+class Device:
+    """产品经 MCP 请求的 _meta 给的设备位置（WGS84），不在模型参数里。"""
+
+    longitude: float
+    latitude: float
+
+
+def device_from_meta(meta: Any) -> Device | None:
+    """和 maps 同一个键、同一套检查：经纬度越界、精度差过 50 公里的都当没给。"""
+
+    raw = meta.get(GEOLOCATION_META_KEY) if isinstance(meta, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    lng, lat, accuracy = _finite(raw.get("longitude")), _finite(raw.get("latitude")), _finite(raw.get("accuracy_m"))
+    if lng is None or lat is None or not (-180 <= lng <= 180 and -90 <= lat <= 90):
+        return None
+    if accuracy is not None and not 0 <= accuracy <= MAX_ACCURACY_M:
+        return None
+    return Device(lng, lat)
+
+
+def _finite(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def parse_arguments(location: Any, requested_date: Any, location_source: Any = NAMED) -> tuple[str, date | None]:
+    """地名只收地名：不收坐标和行政区代码（坐标该由产品从可信来源给，不让模型填）；日期只收 YYYY-MM-DD。
+    当前位置：location_source=current_location 且 location 写 current_location，返回 CURRENT，坐标另从 _meta 取。"""
 
     text = location.strip() if isinstance(location, str) else ""
     if not text or len(text) > MAX_LOCATION_LENGTH:
         raise ForecastError(
             "invalid_arguments", detail=f"location must be a place name of 1-{MAX_LOCATION_LENGTH} characters"
         )
-    if _COORDINATES.fullmatch(text) or _ADMIN_CODE.fullmatch(text):
+    if location_source is None:
+        location_source = NAMED
+    if location_source not in {NAMED, CURRENT}:
+        raise ForecastError("invalid_arguments", detail="location_source must be named or current_location")
+    # 两处要对上（和 maps 一样）：模型把“当前位置”当地名查会查到同名的地方
+    if (location_source == CURRENT) != (text in CURRENT_LOCATION_TEXTS):
+        raise ForecastError(
+            "invalid_arguments",
+            detail="use location=current_location together with location_source=current_location",
+        )
+    if location_source == CURRENT:
+        text = CURRENT
+    elif _COORDINATES.fullmatch(text) or _ADMIN_CODE.fullmatch(text):
         raise ForecastError(
             "invalid_arguments", detail="location must be a place name, not coordinates or an administrative code"
         )
@@ -299,26 +347,42 @@ class Forecaster:
         self._now = now
         self._cache = _Cache(clock)
 
-    async def forecast(self, location: str, requested: date | None = None) -> dict[str, Any]:
-        """整份结果（structuredContent）。没查成抛 ForecastError；上游的错误码原样带出来。"""
+    async def forecast(
+        self, location: str, requested: date | None = None, device: Device | None = None
+    ) -> dict[str, Any]:
+        """整份结果（structuredContent）。没查成抛 ForecastError；上游的错误码原样带出来。
+        location 是 CURRENT 时按 device 的坐标查所在城市，没有 device 报 location_unavailable。"""
 
+        if location == CURRENT and device is None:
+            raise ForecastError("location_unavailable")
         client = self._client()
         if client is None:
             raise ForecastError("not_configured")
         try:
             async with asyncio.timeout(CALL_TIMEOUT_SECONDS):
-                return await self._forecast(client, location, requested)
+                return await self._forecast(client, location, requested, device)
         except QWeatherError as error:
             raise ForecastError(error.code) from None
         except TimeoutError:
             raise ForecastError("call_timeout") from None
 
-    async def _forecast(self, client: QWeatherClient, location: str, requested: date | None) -> dict[str, Any]:
+    async def _city(self, client: QWeatherClient, location: str, device: Device | None) -> City:
+        if location == CURRENT and device is not None:
+            # 和风收“经度,纬度”，最多两位小数（约 1 公里），城市级天气够用；取最近的一个
+            cities = await client.cities(f"{device.longitude:.2f},{device.latitude:.2f}", number=1)
+            if not cities:
+                raise ForecastError("location_not_found")
+            return cities[0]
         # 模型照候选的写法（“江西省·南昌·西湖”）再查时只拿最后一段去查，再按整个写法对；
         # 纯英文地名用英文查（lang=zh 时返回中文名，“Paris”对不上“巴黎”）
         lookup = location.rsplit(SEP, 1)[-1].strip() or location
         lang = "en" if lookup.isascii() else "zh"
-        city = select_city(location, await client.cities(lookup, lang=lang))
+        return select_city(location, await client.cities(lookup, lang=lang))
+
+    async def _forecast(
+        self, client: QWeatherClient, location: str, requested: date | None, device: Device | None
+    ) -> dict[str, Any]:
+        city = await self._city(client, location, device)
         today = self._now().astimezone(place_zone(city)).date()
 
         def daily() -> Awaitable[tuple[datetime, list[Day]]]:
