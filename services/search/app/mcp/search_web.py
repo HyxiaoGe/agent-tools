@@ -10,7 +10,8 @@
 - 0 条是成功加空列表，失败是 {code, message, retryable}，两者不混（Fusion 755d481d）；
 - 额度用完不可重试，告诉模型别再搜（Fusion 把它当临时故障，自动重试、还引导换说法再搜）。
 
-结果：structuredContent 是整份（meta 里是 provider 链，给日志和用量）；文字是去掉 meta 的 JSON（给模型）。
+结果：structuredContent 是整份（meta 里是 provider 链，给日志和用量；还有站点图标 favicons，给产品画来源卡）；
+文字是去掉 meta 的 JSON（给模型）。
 失败：structuredContent 是 {ok:false, error:{code, message, retryable}}，文字是给模型的说明；isError 保持 false，
 和 weather、image 的 MCP 一样，客户端读 structuredContent。错误里不带上游原文（可能有上游网址和查询）。
 """
@@ -46,6 +47,7 @@ DEFAULT_COUNT = 10
 MAX_RECENCY_DAYS = 365
 MAX_DOMAINS = 5
 SNIPPET_CHARS = 1000
+FAVICON_MAX_CHARS = 500
 BEIJING = ZoneInfo("Asia/Shanghai")
 # recency_days 向上取到这几档（搜索服务只认 Brave 风格的天、周、月、年）
 WINDOWS = ((1, "pd"), (7, "pw"), (31, "pm"), (365, "py"))
@@ -240,9 +242,23 @@ def snippet(content: str | None, description: str | None) -> str:
     return text if len(text) <= SNIPPET_CHARS else text[: SNIPPET_CHARS - 1].rstrip() + "…"
 
 
+def favicon(value: Any) -> str | None:
+    """上游给的站点图标网址；只认 http(s)，不收 data: 这类内联内容。"""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if len(text) > FAVICON_MAX_CHARS or urlsplit(text).scheme not in {"http", "https"}:
+        return None
+    return text
+
+
 def shape(query: str, response: SearchResponse, window_days: int | None, domains: list[str]) -> dict[str, Any]:
-    """query 是这次实际搜的（去掉首尾空白后的），不用上游回的：有的上游会改写或不回。"""
+    """query 是这次实际搜的（去掉首尾空白后的），不用上游回的：有的上游会改写或不回。
+
+    站点图标只放 meta.favicons（按返回的网址对应），不进给模型的文字：模型用不上，产品画来源卡要。
+    """
     results: list[dict[str, Any]] = []
+    favicons: dict[str, str] = {}
     seen: set[str] = set()
     for item in response.results:
         key = url_identity(item.url)
@@ -255,6 +271,8 @@ def shape(query: str, response: SearchResponse, window_days: int | None, domains
         if when := published(item.published_at):
             hit["published_at"] = when
         results.append(hit)
+        if icon := favicon(item.favicon):
+            favicons[hit["url"]] = icon
     out: dict[str, Any] = {"ok": True, "query": query, "results": results}
     if window_days is not None:
         out["recency_window_days"] = window_days
@@ -267,6 +285,7 @@ def shape(query: str, response: SearchResponse, window_days: int | None, domains
         "provider_chain": response.provider_chain,
         "fallback_used": response.fallback_used,
         "cached": response.cached,
+        "favicons": favicons,
     }
     return out
 
