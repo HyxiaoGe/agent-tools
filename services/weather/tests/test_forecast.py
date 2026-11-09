@@ -15,9 +15,12 @@ from fastmcp import Client
 
 from app.forecast import (
     FORECAST_CACHE_SECONDS,
+    GEOLOCATION_META_KEY,
+    Device,
     Forecaster,
     ForecastError,
     city_label,
+    device_from_meta,
     parse_arguments,
     select_city,
     summarize_hourly,
@@ -154,6 +157,43 @@ def test_arguments_take_place_names_and_one_exact_date():
         assert e.value.code == "invalid_arguments" and e.value.detail
 
 
+def test_current_location_needs_both_the_source_and_the_text():
+    assert parse_arguments("current_location", None, "current_location") == ("current_location", None)
+    assert parse_arguments("当前位置", "2026-10-09", "current_location") == ("current_location", date(2026, 10, 9))
+    assert parse_arguments("深圳市", None, None) == ("深圳市", None)
+    # 两处对不上：把“当前位置”当地名查会查到同名的地方；只写了来源没写 current_location 也不猜
+    for location, source in (
+        ("current_location", "named"),
+        ("当前位置", None),
+        ("深圳市", "current_location"),
+        ("深圳市", "device"),
+    ):
+        with pytest.raises(ForecastError) as e:
+            parse_arguments(location, None, source)
+        assert e.value.code == "invalid_arguments" and e.value.detail
+
+
+def test_device_comes_only_from_a_sane_meta():
+    def meta(**fields):
+        return {GEOLOCATION_META_KEY: fields}
+
+    assert device_from_meta(meta(longitude=120.1551, latitude=30.2741, accuracy_m=35)) == Device(120.1551, 30.2741)
+    assert device_from_meta(meta(longitude=120, latitude=30)) == Device(120.0, 30.0)
+    for bad in (
+        None,
+        {},
+        {GEOLOCATION_META_KEY: "120,30"},
+        meta(longitude=120.1),
+        meta(longitude=190, latitude=30),
+        meta(longitude=120, latitude=-91),
+        meta(longitude="120", latitude="30"),
+        meta(longitude=True, latitude=30),
+        meta(longitude=120, latitude=30, accuracy_m=80_000),
+        meta(longitude=float("nan"), latitude=30),
+    ):
+        assert device_from_meta(bad) is None
+
+
 def test_resolution_rules():
     hangzhou, xiaoshan = city("杭州", "杭州", "浙江省"), city("萧山", "杭州", "浙江省")
     chaoyang_ln, chaoyang_bj = city("朝阳", "朝阳", "辽宁省"), city("朝阳", "北京", "北京市")
@@ -263,6 +303,27 @@ async def test_named_place_returns_four_days_from_local_today():
     assert fake.paths() == ["lookup", "15d", "168h"]
     assert fake.requests[0].url.params["lang"] == "zh"
     assert fake.requests[1].url.params["location"] == "101210101"
+
+
+async def test_current_location_looks_up_the_city_at_the_device():
+    fake = FakeQWeather()
+    result = await forecaster(fake).forecast("current_location", None, Device(120.1551, 30.2741))
+
+    assert result["resolved_location"] == "浙江省·杭州" and result["day_count"] == 4
+    assert fake.paths() == ["lookup", "15d", "168h"]
+    # 和风收两位小数的“经度,纬度”，只要最近的一个
+    assert fake.requests[0].url.params["location"] == "120.16,30.27"
+    assert fake.requests[0].url.params["number"] == "1"
+
+    with pytest.raises(ForecastError) as e:
+        await forecaster(FakeQWeather(cities=[])).forecast("current_location", None, Device(0.0, 0.0))
+    assert e.value.code == "location_not_found"
+
+    # 没给设备位置：不调和风
+    fake = FakeQWeather()
+    with pytest.raises(ForecastError) as e:
+        await forecaster(fake).forecast("current_location")
+    assert e.value.code == "location_unavailable" and fake.requests == []
 
 
 async def test_bad_days_and_hours_are_dropped():
@@ -410,9 +471,9 @@ async def test_failures_carry_codes():
 # ---- MCP 工具 ----
 
 
-async def call(fake: FakeQWeather, **arguments):
+async def call(fake: FakeQWeather, meta: dict | None = None, **arguments):
     async with Client(build_mcp(forecaster(fake))) as client:
-        return await client.call_tool("get_weather", arguments, raise_on_error=False)
+        return await client.call_tool("get_weather", arguments, raise_on_error=False, meta=meta)
 
 
 async def test_tool_gives_the_page_everything_and_the_model_no_hourly_detail():
@@ -464,6 +525,24 @@ async def test_tool_failures_tell_the_model_what_to_do():
     assert result.content[0].text.startswith("The weather service returned no usable result.")
 
 
+async def test_tool_reads_the_device_location_from_meta():
+    meta = {GEOLOCATION_META_KEY: {"longitude": 120.1551, "latitude": 30.2741, "accuracy_m": 35}}
+    fake = FakeQWeather()
+    result = await call(fake, meta=meta, location="current_location", location_source="current_location")
+    assert result.structured_content["ok"] and result.structured_content["resolved_location"] == "浙江省·杭州"
+    assert fake.requests[0].url.params["location"] == "120.16,30.27"
+
+    # 产品没给位置：让模型问用户在哪个城市，不猜
+    result = await call(FakeQWeather(), location="current_location", location_source="current_location")
+    assert result.structured_content["error"]["code"] == "location_unavailable"
+    assert "Ask the user which city" in result.content[0].text and "Do not claim to know" in result.content[0].text
+
+    # 给了位置但模型按地名查：位置不用，照地名
+    fake = FakeQWeather()
+    result = await call(fake, meta=meta, location="杭州")
+    assert result.structured_content["ok"] and fake.requests[0].url.params["location"] == "杭州"
+
+
 def test_description_is_product_neutral():
     for product_specific in (
         "search_web",
@@ -486,7 +565,8 @@ def test_description_is_product_neutral():
 
 
 async def test_mcp_is_served_next_to_rest_and_rest_is_unchanged():
-    app = create_app(settings(), FakeQWeather().transport())
+    fake = FakeQWeather()
+    app = create_app(settings(), fake.transport())
     headers = {"Accept": "application/json, text/event-stream"}
 
     def rpc(body: httpx.Response) -> dict:
@@ -500,7 +580,23 @@ async def test_mcp_is_served_next_to_rest_and_rest_is_unchanged():
             )
             (tool,) = listed["result"]["tools"]
             assert tool["name"] == "get_weather" and tool["inputSchema"]["required"] == ["location"]
-            assert set(tool["inputSchema"]["properties"]) == {"location", "requested_date"}
+            assert set(tool["inputSchema"]["properties"]) == {"location", "requested_date", "location_source"}
+            assert tool["inputSchema"]["properties"]["location_source"]["enum"] == ["named", "current_location"]
+            # 产品经 HTTP 带 _meta 的设备位置（网关原样转发 JSON-RPC 请求体）
+            body = {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_weather",
+                    "arguments": {"location": "current_location", "location_source": "current_location"},
+                    "_meta": {GEOLOCATION_META_KEY: {"longitude": 120.1551, "latitude": 30.2741}},
+                },
+            }
+            rpc(await http.post("/mcp", json=body, headers=headers))
+            # 这里的“现在”是真实时间，假预报的日期对不上，只看城市是按设备坐标查的
+            lookups = [r.url.params["location"] for r in fake.requests if r.url.path.endswith("/lookup")]
+            assert lookups[-1] == "120.16,30.27"
             assert tool["annotations"]["readOnlyHint"] is True
             # REST /v1/cities 不多出时区字段（线上 Fusion 在用）
             cities = (await http.get("/v1/cities", params={"location": "杭州"})).json()["cities"]

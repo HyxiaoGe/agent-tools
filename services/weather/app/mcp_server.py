@@ -14,20 +14,22 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.tools import ToolResult
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from app.forecast import (
+    CURRENT,
     DAILY_WINDOW_DAYS,
     FORECAST_DAYS,
     HOURLY_HOURS,
     MAX_LOCATION_LENGTH,
     Forecaster,
     ForecastError,
+    device_from_meta,
     parse_arguments,
 )
 
@@ -66,7 +68,12 @@ On failure the result has ok=false and says what to do next. In every case, do n
 LOCATION_DESCRIPTION = (
     "The complete place text the user supplied, such as 广州, 杭州西湖区, or Paris; for a whole province or region, "
     f"its capital or main city. A place name of 1-{MAX_LOCATION_LENGTH} characters, not coordinates or an "
-    "administrative code."
+    f"administrative code. For the device's current location, pass {CURRENT} and set location_source to {CURRENT}."
+)
+LOCATION_SOURCE_DESCRIPTION = (
+    "named for a place name in location. current_location for the device's current location, only when the user "
+    "asks about where they are now without naming a place; the place is resolved from the device location the "
+    "application provides, never from the conversation."
 )
 REQUESTED_DATE_DESCRIPTION = (
     "One specific day the user asks about, in YYYY-MM-DD form, with relative wording resolved to the exact date. "
@@ -76,6 +83,7 @@ REQUESTED_DATE_DESCRIPTION = (
 # 给日志和页面看的原因；模型看的是下面 _model_text 的说明
 MESSAGES = {
     "location_not_found": "The weather service could not find this place.",
+    "location_unavailable": "The device location was not provided.",
     "ambiguous_location": "The place name matches several areas.",
     "not_configured": "The weather service is not configured.",
     "upstream_timeout": "QWeather did not respond in time.",
@@ -108,6 +116,12 @@ def _model_text(error: ForecastError) -> str:
             "district; otherwise tell the user the place was not found and ask for its city. Do not fabricate "
             "weather facts."
         )
+    if error.code == "location_unavailable":
+        return (
+            "No forecast was fetched: the device's current location is not available. Do not claim to know where "
+            "the user is. Ask the user which city they are in, then call again with it as a named place. Do not "
+            "fabricate weather facts."
+        )
     if error.code == "invalid_arguments":
         return (
             f"No forecast was fetched: {error.detail}. Call again with corrected arguments only if the user's "
@@ -135,6 +149,13 @@ def success(result: dict[str, Any]) -> ToolResult:
     return ToolResult(content=json.dumps(seen, ensure_ascii=False, separators=(",", ":")), structured_content=result)
 
 
+def _request_meta(ctx: Context | None) -> Any:
+    """产品放在 tools/call 的 _meta 里的东西（设备位置）；和 maps 一样从请求上下文取。"""
+
+    request = ctx.request_context if ctx is not None else None
+    return request.meta if request is not None else None
+
+
 def build_mcp(forecaster: Forecaster) -> FastMCP:
     mcp = FastMCP(
         "weather",
@@ -150,10 +171,14 @@ def build_mcp(forecaster: Forecaster) -> FastMCP:
     async def get_weather(
         location: Annotated[str, Field(description=LOCATION_DESCRIPTION)],
         requested_date: Annotated[str | None, Field(description=REQUESTED_DATE_DESCRIPTION)] = None,
+        location_source: Annotated[
+            Literal["named", "current_location"], Field(description=LOCATION_SOURCE_DESCRIPTION)
+        ] = "named",
+        ctx: Context | None = None,
     ) -> ToolResult:
         try:
-            place, on = parse_arguments(location, requested_date)
-            result = await forecaster.forecast(place, on)
+            place, on = parse_arguments(location, requested_date, location_source)
+            result = await forecaster.forecast(place, on, device_from_meta(_request_meta(ctx)))
         except ForecastError as error:
             # 地名、日期不进日志
             logger.info("get_weather_failed code=%s", error.code)
