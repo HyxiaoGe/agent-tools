@@ -70,7 +70,7 @@ Response:
 
 The service exposes MCP tools at `/mcp` (stateless streamable HTTP: one POST per call, no session). Through the gateway it is `/search/mcp`.
 
-- `search_web` — for products' models: `query`, `count` (1-20, default 10), `recency_days` (1-365, rounded up to 1/7/31/365), `domains` (≤5 bare domains, results filtered to them). Returns deduplicated results with `title` / `url` / `snippet` (≤1000 chars) / `published_at`; failures come back as `{ok: false, error: {code, message, retryable}}` (`bad_arguments`, `quota_exhausted`, `timeout`, `rate_limited`, `upstream_error`, `not_configured`). The model sees JSON without `meta` (provider chain); `structuredContent` has everything
+- `search_web` — for products' models: `query`, `count` (1-20, default 10), `recency_days` (1-365, rounded up to 1/7/31/365), `domains` (≤5 bare domains, results filtered to them). Returns deduplicated results with `title` / `url` / `snippet` (≤1000 chars) / `published_at`; failures come back as `{ok: false, error: {code, message, retryable}}` (`bad_arguments`, `quota_exhausted`, `timeout`, `rate_limited`, `upstream_error`, `not_configured`). The model sees JSON without `meta` (provider chain, and `favicons`: site icon URLs keyed by result URL, for product source cards); `structuredContent` has everything
 - `search` — General web/news/image search (full `SearchResponse`)
 - `search_news` — News search shortcut
 - `search_images` — Image search shortcut

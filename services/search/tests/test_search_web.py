@@ -199,9 +199,24 @@ def test_shape_reports_window_relaxation_and_domains_and_hides_meta_from_model()
         "provider_chain": ["deepseek", "firecrawl"],
         "fallback_used": True,
         "cached": False,
+        "favicons": {},
     }
     seen = json.loads(sw.success(out).content[0].text)
     assert "meta" not in seen and seen["results"][0]["url"] == "https://openai.com/x"
+
+
+def test_favicons_go_to_meta_by_url_and_not_to_the_model():
+    response = _response(
+        _item("https://a.com/1", favicon=" https://a.com/favicon.ico "),
+        _item("https://b.com/2", favicon="data:image/png;base64,AAAA"),
+        _item("https://c.com/3", favicon="https://c.com/" + "x" * sw.FAVICON_MAX_CHARS),
+        _item("https://www.a.com/1/", favicon="https://dup.example/icon.png"),  # 重复的那条去掉了，图标也不要
+        _item("https://d.com/4"),
+    )
+    out = sw.shape("q", response, None, [])
+    assert out["meta"]["favicons"] == {"https://a.com/1": "https://a.com/favicon.ico"}
+    seen = sw.success(out).content[0].text
+    assert "favicon" not in seen
 
 
 # ---- 经 MCP 调用 ----
