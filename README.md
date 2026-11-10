@@ -46,6 +46,10 @@ flowchart LR
 | [tmap](services/tmap/README.md) | 腾讯地图：地点搜索、逆地址解析、路线与距离矩阵（官方 MCP 的代理，服务端持有密钥、只放行只读工具） | MCP |
 | [maps](services/maps/README.md) | 地图组合层：MCP 工具 `place_search`、`route_compare`（地名解析、重名、当前位置、整理结果，Fusion 和灵稿共用）；直接调高德、腾讯的 Web 服务，每次上游请求先高德，额度用尽或出错时转腾讯 | MCP |
 
+## 工具展示与在线试用
+
+[playground](services/playground/README.md) 提供八类能力的工具目录与在线试用：搜索后继续读取全文，图片、天气、地点与班次按各自的结果展示。独立页面服务经现有网关调用工具，试用密钥只留在服务端；未配置时仍可浏览目录。
+
 ## 设计要点
 
 ### 身份只来自密钥，下游不各自鉴权

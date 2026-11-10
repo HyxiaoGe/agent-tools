@@ -4,6 +4,7 @@
 
 | 目录 | 服务 | dev 端口 | 说明 |
 |---|---|---|---|
+| `services/playground` | agent-tools-playground | 8101（仅本机；middleware_default 内按容器名访问） | `https://agent-tools.seanfield.org`：工具目录与在线试用；仅经网关调用工具，见 [接入与试用边界](../services/playground/README.md) |
 | `gateway` | agent-tools-gateway | 8100（仅本机；middleware_default 内按容器名访问；外部经 `agent-tools.dev.seanfield.org`） | 统一入口：产品密钥鉴权、调用记账、`/image` `/search` `/reader` `/trends` `/amap` `/context7` `/weather` `/flyai` `/tmap` `/maps` 转发 |
 | `services/image` | image-service | 8090（host 网络） | 生图 / 改图，REST + MCP，产品密钥鉴权与用量记账 |
 | `services/search` | search-service | 8080（仅 agent-tools-internal） | 多搜索源统一检索，REST `/search` 和 MCP 工具 `search_web`（`/search/mcp`，无状态）共用备用链、缓存和每日额度；自带 `search-redis` 存缓存与 Firecrawl 每日用量 |
@@ -31,7 +32,7 @@ search / reader / trends / amap / context7 / weather / flyai / tmap / maps 自�
 手动重新部署（例如改了 dev 上的 `.env`）：
 
 ```bash
-gh workflow run pipeline.yml -R HyxiaoGe/agent-tools -f service=<all|gateway|image|search|reader|trends|amap|context7|weather|flyai|tmap|maps>
+gh workflow run pipeline.yml -R HyxiaoGe/agent-tools -f service=<all|gateway|image|search|reader|trends|amap|context7|weather|flyai|tmap|maps|playground>
 ```
 
 dev 上每个服务的 `.env` 放在部署目录对应的 `services/<name>/.env`（网关是 `gateway/.env`），不入库；生图结果与用量库在 `services/image/storage`，网关用量库在 `gateway/storage`。
@@ -39,3 +40,5 @@ dev 上每个服务的 `.env` 放在部署目录对应的 `services/<name>/.env`
 ## 历史
 
 image / search / reader 三个服务分别从 `HyxiaoGe/image-service`、`search-service`、`reader-service` 用 `git subtree` 并入，保留原提交历史。
+
+playground 的产品密钥与外部来源配置放在 `services/playground/.env`，当前按约定复用 Fusion 密钥，仅在页面后端使用，共享原产品的权限与额度。没有配置时页面正常展示、禁用运行；部署健康不等于所有工具已验收。公网域名 `agent-tools.seanfield.org` 经香港现有 SNI 中继、SSH 反向隧道进入 dev Nginx 的 8443，证书沿用 webroot 与自动续期；Nginx 模板见 `services/playground/deploy/nginx-playground.conf`。`PLAYGROUND_PUBLIC_ORIGIN` 填公网 HTTPS 来源，`PLAYGROUND_TRUSTED_PROXY_IP` 填 nginx-proxy 在 middleware_default 的实际 IP，转交确认后的访客地址供计数。每日次数保存在 compose 命名卷 `agent-tools-playground_playground-data`，发布和容器重建不清空。原 `agent-tools.dev.seanfield.org` 网关路由保持不变。独立试用产品作为可选方案，见该服务 README。
