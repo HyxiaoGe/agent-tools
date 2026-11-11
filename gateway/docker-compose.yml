@@ -9,7 +9,8 @@ services:
     environment:
       - TZ=Asia/Shanghai
     # 只在本机暴露，便于部署健康检查；调用方经 middleware_default 按容器名访问，
-    # search / reader 只在专用网络 agent-tools-internal 里，只有网关能连到。
+    # search / reader 等只在专用网络 agent-tools-internal 里，只有网关能连到；
+    # sandbox 单独在 agent-tools-sandbox 里（它拿着宿主 Docker 的控制入口，不和其他服务放一个网络）。
     ports:
       - "127.0.0.1:8100:8100"
     extra_hosts:
@@ -24,6 +25,7 @@ services:
     networks:
       - middleware
       - agent-tools
+      - sandbox
 
 networks:
   middleware:
@@ -32,3 +34,6 @@ networks:
   agent-tools:
     external: true
     name: agent-tools-internal
+  sandbox:
+    external: true
+    name: agent-tools-sandbox

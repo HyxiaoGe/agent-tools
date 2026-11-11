@@ -1,0 +1,27 @@
+[project]
+name = "agent-tools-sandbox"
+version = "0.1.0"
+description = "沙箱执行服务：在 gVisor 隔离、断网、有上限的一次性容器里跑一条命令，工作目录按产品和工作区留在磁盘上"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
+    "pydantic-settings>=2.6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "anyio>=4.0.0",
+    "httpx>=0.28.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

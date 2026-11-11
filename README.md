@@ -1,6 +1,6 @@
 # agent-tools
 
-给 AI Agent 用的工具服务：生图 / 改图、联网搜索、网页正文读取、热榜查询、地图（高德 / 腾讯）、技术文档、天气与航班 / 高铁查询。调用方只配一个地址和一把产品密钥，由网关统一鉴权、记账和转发。[Fusion](https://github.com/HyxiaoGe/fusion) 的生图、联网搜索和网页读取都由这里提供。
+给 AI Agent 用的工具服务：生图 / 改图、联网搜索、网页正文读取、热榜查询、地图（高德 / 腾讯）、技术文档、天气与航班 / 高铁查询、在隔离的沙箱里跑命令。调用方只配一个地址和一把产品密钥，由网关统一鉴权、记账和转发。[Fusion](https://github.com/HyxiaoGe/fusion) 的生图、联网搜索和网页读取都由这里提供。
 
 ```mermaid
 flowchart LR
@@ -17,6 +17,9 @@ flowchart LR
         M["tmap<br/>腾讯地图 MCP 代理"]
         MP["maps<br/>地图组合层"]
     end
+    subgraph sandboxnet["单独的内网：只有网关能访问"]
+        SB["sandbox<br/>沙箱里跑命令"]
+    end
     G --> S
     G --> R
     G --> T
@@ -26,10 +29,12 @@ flowchart LR
     G --> F
     G --> M
     G --> MP
+    G --> SB
     I --> IP["Seedream / Gemini"]
     S --> SP["Brave / Tavily / Firecrawl / DeepSeek"]
     R --> RP["直连 / Firecrawl / Tavily / Jina"]
     MP --> MPP["高德 → 腾讯 Web 服务"]
+    SB --> SBP["gVisor 一次性容器<br/>断网 · 只读 · 有上限"]
 ```
 
 | 服务 | 做什么 | 接口 |
@@ -45,6 +50,7 @@ flowchart LR
 | [flyai](services/flyai/README.md) | 航班 / 高铁查询：FlyAI 第三方 CLI 的隔离适配器，服务端持有 API Key；MCP 工具 `search_flights`、`search_trains`（参数规整、先筛后截、认不出的地名报错，Fusion 和灵稿共用），另有两个 REST 查询接口 | MCP、REST |
 | [tmap](services/tmap/README.md) | 腾讯地图：地点搜索、逆地址解析、路线与距离矩阵（官方 MCP 的代理，服务端持有密钥、只放行只读工具） | MCP |
 | [maps](services/maps/README.md) | 地图组合层：MCP 工具 `place_search`、`route_compare`（地名解析、重名、当前位置、整理结果，Fusion 和灵稿共用）；直接调高德、腾讯的 Web 服务，每次上游请求先高德，额度用尽或出错时转腾讯 | MCP |
+| [sandbox](services/sandbox/README.md) | 沙箱执行：给一个工作目录、跑一条命令、交回输出和产出的文件；每条命令一个 gVisor 隔离的一次性容器，断网、根文件系统只读、有内存 / CPU / 进程数 / 时间上限，预装 Python 数据分析的包 | REST |
 
 ## 工具展示与在线试用
 
@@ -54,7 +60,7 @@ flowchart LR
 
 ### 身份只来自密钥，下游不各自鉴权
 
-网关按 `Authorization` 里的产品密钥认定调用方，再按产品配置放行服务（付费服务要逐个产品写明才可调用），丢弃调用方自带的身份头再重写转发，下游收到的产品、用户、场景都可信。search / reader / trends / amap / context7 / weather / flyai / tmap / maps 自身不做鉴权，只接入专用内网，外部和其他容器都只能经网关访问；路径里含 `.` / `..` 段一律拒绝，防止借公开前缀绕过鉴权。每个请求记一行用量（产品、用户、场景、请求 ID、MCP 工具名、耗时），可以按产品、场景和工具统计调用量。
+网关按 `Authorization` 里的产品密钥认定调用方，再按产品配置放行服务（付费服务要逐个产品写明才可调用），丢弃调用方自带的身份头再重写转发，下游收到的产品、用户、场景都可信。search / reader / trends / amap / context7 / weather / flyai / tmap / maps / sandbox 自身不做鉴权，只接入专用内网（sandbox 单独一个，里面只有它和网关），外部和其他容器都只能经网关访问；路径里含 `.` / `..` 段一律拒绝，防止借公开前缀绕过鉴权。每个请求记一行用量（产品、用户、场景、请求 ID、MCP 工具名、耗时），可以按产品、场景和工具统计调用量。
 
 ### 慢服务不拖垮其他服务
 

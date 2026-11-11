@@ -1,0 +1,36 @@
+name: sandbox
+services:
+  sandbox-service:
+    build: .
+    # dev 部署时由 deploy-from-acr.sh 传入本次提交的镜像（agent-tools/<服务>:<短 SHA>）；未传时用当前已部署的版本，本地开发会按 build 构建。
+    image: ${AGENT_TOOLS_IMAGE:-agent-tools/sandbox:current}
+    container_name: sandbox-service
+    # 没有密钥要配；.env 只用来调上限，没有也能起。
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - TZ=Asia/Shanghai
+      - PORT=8095
+      # 跑命令的容器和服务用同一个镜像、同一个版本。
+      - SANDBOX_IMAGE=${AGENT_TOOLS_IMAGE:-agent-tools/sandbox:current}
+    volumes:
+      # 宿主 Docker 的控制入口，服务靠它起跑命令的容器。拿到它就等于拿到宿主的 root：
+      # 这个服务不开端口，单独一个网络、只有网关能到；跑命令的容器里没有它。
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 各产品的工作目录。跑命令的容器直接挂宿主上的这个目录，所以只能是绑定挂载，不能换成命名卷。
+      - ./storage:/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    restart: unless-stopped
+    # 自身无鉴权，经网关 /sandbox/... 访问。不放进其他服务共用的 agent-tools-internal：那里的容器互相都能连，
+    # 这个服务手里有 docker.sock 和用户的文件，单独一个网络（流水线 sync 步骤创建，--internal，不通外网），里面只有它和网关。
+    networks:
+      - sandbox
+
+networks:
+  sandbox:
+    external: true
+    name: agent-tools-sandbox

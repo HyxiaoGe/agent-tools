@@ -1,6 +1,6 @@
 # agent-tools 协作约定
 
-本仓库合并了 image / search / reader / trends / amap / context7 / weather / flyai / tmap / maps 工具服务与统一网关，见 [README](README.md)，端口、部署与流水线见 [docs/operations.md](docs/operations.md)。改某个服务时读取该服务目录下的 CLAUDE.md / README；跨服务改动（统一入口、共享鉴权）同时核对各服务的调用方。
+本仓库合并了 image / search / reader / trends / amap / context7 / weather / flyai / tmap / maps / sandbox 工具服务与统一网关，见 [README](README.md)，端口、部署与流水线见 [docs/operations.md](docs/operations.md)。改某个服务时读取该服务目录下的 CLAUDE.md / README；跨服务改动（统一入口、共享鉴权）同时核对各服务的调用方。
 
 `services/playground` 是独立的工具展示与在线试用页面，经现有网关调用工具，不直连工具内网；试用密钥只留在服务端。接入与限额边界见该服务 README。
 
