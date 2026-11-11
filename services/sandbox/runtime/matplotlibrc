@@ -1,0 +1,5 @@
+# 沙箱里 matplotlib 的默认设置（MATPLOTLIBRC 指到这里）：不需要显示器，中文能画出来。
+backend: Agg
+font.family: sans-serif
+font.sans-serif: WenQuanYi Micro Hei, DejaVu Sans
+axes.unicode_minus: False

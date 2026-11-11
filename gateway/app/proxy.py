@@ -43,10 +43,15 @@ def is_mcp_path(path: str) -> bool:
 def counts_as_call(service: str, path: str, tool: str | None) -> bool:
     """日报和每日上限只算真正的调用：REST 请求和 MCP tools/call。不算的：MCP 握手（initialize、tools/list、SSE），
     以及产品上传、按 id 取、删 image-service 存着的图（/image/v1/images、/image/v1/images/...：产品页面每看一次图
-    就取一次，用户发的图要先传上去，都不是生图、不调上游）。path 有没有开头的 / 都行（转发时没有，用量记录里有）。"""
+    就取一次，用户发的图要先传上去，都不是生图、不调上游）；sandbox 只算跑命令（/sandbox/v1/workspaces/{id}/run），
+    往工作区放文件、取文件、列文件、停止、删除都不算（跑一条命令前后要存取好几次）。
+    path 有没有开头的 / 都行（转发时没有，用量记录里有）。"""
     stripped = path.strip("/")
     if service == "image" and (stripped == "v1/images" or stripped.startswith("v1/images/")):
         return False
+    if service == "sandbox":
+        parts = stripped.split("/")
+        return len(parts) == 4 and parts[:2] == ["v1", "workspaces"] and parts[3] == "run"
     return bool(tool) or not is_mcp_path(path)
 
 

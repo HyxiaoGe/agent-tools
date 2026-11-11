@@ -13,7 +13,7 @@ from app.main import create_app
 from app.usage import UsageRecord, UsageStore, now_iso
 from app.usage_report import summarize
 
-SERVICES = ("image", "search", "reader", "trends", "amap", "context7", "weather", "flyai", "tmap", "maps")
+SERVICES = ("image", "search", "reader", "trends", "amap", "context7", "weather", "flyai", "tmap", "maps", "sandbox")
 FUSION_KEY = "fusion-test-key"
 VALIDATION_KEY = "validation-test-key"
 
@@ -448,6 +448,7 @@ async def test_generated_images_are_public_and_not_recorded(client, upstreams, s
         ("flyai", "/flyai/health", "/health"),
         ("tmap", "/tmap/health", "/health"),
         ("maps", "/maps/health", "/health"),
+        ("sandbox", "/sandbox/health", "/health"),
     ],
 )
 async def test_health_checks_are_public_and_not_recorded(client, upstreams, settings, service, path, upstream_path):

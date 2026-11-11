@@ -19,7 +19,7 @@ pytestmark = pytest.mark.anyio
 
 FUSION_KEY = "fusion-test-key"
 LINGDRAFT_KEY = "lingdraft-test-key"
-SERVICES = ("image", "search", "reader", "trends", "amap", "context7", "weather", "flyai", "tmap", "maps")
+SERVICES = ("image", "search", "reader", "trends", "amap", "context7", "weather", "flyai", "tmap", "maps", "sandbox")
 INITIALIZE = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
 TOOL_CALL = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_latest_news"}}
 
@@ -185,6 +185,33 @@ async def test_uploading_fetching_and_deleting_stored_images_is_neither_counted_
     assert gateway.received["image"] == 7
     stats = daily_report.collect_day_stats(str(tmp_path / "usage.sqlite3"), datetime.now(daily_report.BEIJING).date())
     assert stats.services["image"].calls == 1
+
+
+async def test_sandbox_counts_only_run_commands(tmp_path):
+    gateway = App(make_settings(tmp_path, "sandbox=1"))
+    base = "/sandbox/v1/workspaces/c1"
+    async with gateway as http:
+        upload = await http.put(f"{base}/file?path=uploads/a.csv", headers=auth(), content=b"a,b")
+        first = await http.post(f"{base}/run", headers=auth(), json={"command": "ls"})
+        over = await http.post(f"{base}/run", headers=auth(), json={"command": "ls"})
+        # 到了上限，存取文件、停止、删除照常
+        others = [
+            (await http.get(f"{base}/file?path=outputs/a.png", headers=auth())).status_code,
+            (await http.get(f"{base}/files", headers=auth())).status_code,
+            (await http.post(f"{base}/cancel", headers=auth())).status_code,
+            (await http.delete(base, headers=auth())).status_code,
+            # 工作区的名字正好叫 run：删它不是跑命令
+            (await http.delete("/sandbox/v1/workspaces/run", headers=auth())).status_code,
+        ]
+        unauthenticated = await http.post(f"{base}/run", json={"command": "ls"})
+
+    assert upload.status_code == 200
+    assert (first.status_code, over.status_code) == (200, 429)
+    assert others == [200] * 5
+    assert unauthenticated.status_code == 401
+    assert gateway.received["sandbox"] == 7
+    stats = daily_report.collect_day_stats(str(tmp_path / "usage.sqlite3"), datetime.now(daily_report.BEIJING).date())
+    assert stats.services["sandbox"].calls == 1
 
 
 async def test_services_without_a_limit_are_not_capped(tmp_path):

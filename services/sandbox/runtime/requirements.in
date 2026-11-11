@@ -1,0 +1,15 @@
+# 沙箱里给命令用的 Python 包（装进镜像的系统 Python）。改这里之后重新生成 requirements.txt：
+#   uv pip compile runtime/requirements.in -o runtime/requirements.txt \
+#     --python-version 3.12 --python-platform x86_64-manylinux_2_28 --generate-hashes --no-header
+numpy
+pandas
+matplotlib
+seaborn
+scipy
+# 读写 Excel：.xlsx 用 openpyxl，老的 .xls 用 xlrd
+openpyxl
+xlrd
+# DataFrame.to_markdown()
+tabulate
+# 猜 CSV 的编码（GBK / UTF-8）
+charset-normalizer

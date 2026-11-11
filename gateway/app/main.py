@@ -54,6 +54,7 @@ _HEALTH_PATHS = {
     "flyai": "health",
     "tmap": "health",
     "maps": "health",
+    "sandbox": "health",
 }
 logger = logging.getLogger("gateway")
 

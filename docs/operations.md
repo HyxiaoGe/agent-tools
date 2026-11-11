@@ -5,7 +5,7 @@
 | 目录 | 服务 | dev 端口 | 说明 |
 |---|---|---|---|
 | `services/playground` | agent-tools-playground | 8101（仅本机；middleware_default 内按容器名访问） | `https://agent-tools.seanfield.org`：工具目录与在线试用；仅经网关调用工具，见 [接入与试用边界](../services/playground/README.md) |
-| `gateway` | agent-tools-gateway | 8100（仅本机；middleware_default 内按容器名访问；外部经 `agent-tools.dev.seanfield.org`） | 统一入口：产品密钥鉴权、调用记账、`/image` `/search` `/reader` `/trends` `/amap` `/context7` `/weather` `/flyai` `/tmap` `/maps` 转发 |
+| `gateway` | agent-tools-gateway | 8100（仅本机；middleware_default 内按容器名访问；外部经 `agent-tools.dev.seanfield.org`） | 统一入口：产品密钥鉴权、调用记账、`/image` `/search` `/reader` `/trends` `/amap` `/context7` `/weather` `/flyai` `/tmap` `/maps` `/sandbox` 转发 |
 | `services/image` | image-service | 8090（host 网络） | 生图 / 改图，REST + MCP，产品密钥鉴权与用量记账 |
 | `services/search` | search-service | 8080（仅 agent-tools-internal） | 多搜索源统一检索，REST `/search` 和 MCP 工具 `search_web`（`/search/mcp`，无状态）共用备用链、缓存和每日额度；自带 `search-redis` 存缓存与 Firecrawl 每日用量 |
 | `services/reader` | reader-service | 8091（仅 agent-tools-internal） | 网页正文读取，REST `/read` 和 MCP 工具 `read_page`（`/reader/mcp`，无状态）共用读取调度和每日额度 |
@@ -16,8 +16,11 @@
 | `services/flyai` | flyai-adapter | 8093（仅 agent-tools-internal） | FlyAI 航班 / 高铁查询适配器：第三方 CLI 以隔离子进程运行、持有 API Key、字段投影；按用户并发隔离；付费服务，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
 | `services/tmap` | tmap-mcp | 3336（仅 agent-tools-internal） | 腾讯地图（腾讯位置服务）官方 MCP 的代理：注入密钥、只读白名单；按 key 计每日配额，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
 | `services/maps` | maps-service | 8094（仅 agent-tools-internal） | 地图组合层：MCP 工具 `place_search`、`route_compare`（`/maps/mcp`，无状态）；直接调高德、腾讯的 Web 服务，先高德后腾讯；每天的用量计数在 `services/maps/storage`；付费服务，产品要在网关 `PRODUCTS` 的 `services` 里写明 |
+| `services/sandbox` | sandbox-service | 8095（仅 agent-tools-sandbox） | 沙箱执行：每条命令起一个 gVisor（`runsc`）隔离、断网的一次性容器，跑完就删；服务挂着宿主的 `/var/run/docker.sock`（等于宿主 root），所以不开端口，单独一个网络、里面只有它和网关；工作目录在 `services/sandbox/storage`，7 天没用自动清；产品要在网关 `PRODUCTS` 的 `services` 里写明 |
 
-search / reader / trends / amap / context7 / weather / flyai / tmap / maps 自身不鉴权，只接入专用网络 `agent-tools-internal`（流水线 sync 步骤创建），只有网关能访问；其他容器和监控都经网关。各服务健康检查 `/search/health`、`/reader/health`、`/image/v1/health`、`/amap/health`、`/context7/health`、`/weather/health`、`/flyai/health`、`/tmap/health`、`/maps/health` 经网关免密钥、不记账。
+search / reader / trends / amap / context7 / weather / flyai / tmap / maps 自身不鉴权，只接入专用网络 `agent-tools-internal`（流水线 sync 步骤创建），只有网关能访问；其他容器和监控都经网关。sandbox 同样不鉴权，但不在这个网络里：`agent-tools-internal` 里的容器互相都能连，而 sandbox 手里有 docker.sock 和用户的文件，所以单独放在 `agent-tools-sandbox`（sync 步骤创建，`--internal`、不通外网），里面只有它和网关。各服务健康检查 `/search/health`、`/reader/health`、`/image/v1/health`、`/amap/health`、`/context7/health`、`/weather/health`、`/flyai/health`、`/tmap/health`、`/maps/health`、`/sandbox/health` 经网关免密钥、不记账。
+
+sandbox 依赖 dev 上装的 gVisor：`runsc` 在 `/usr/local/bin`，在 `/etc/docker/daemon.json` 的 `runtimes` 里登记（2026-11-11 装的 release-20261102.0，Docker 默认运行时仍是 `runc`；安装、回滚脚本和当时的配置备份在 dev 的 `~/gvisor-20261102.0/` 和 `/etc/docker/daemon.json.bak-20261111-before-gvisor`）。没装或没登记时 sandbox-service 照常启动，`/sandbox/health` 回 `ready: false`、`reason: runtime_missing`，跑命令回 503。
 
 ## 流水线
 
@@ -32,10 +35,10 @@ search / reader / trends / amap / context7 / weather / flyai / tmap / maps 自�
 手动重新部署（例如改了 dev 上的 `.env`）：
 
 ```bash
-gh workflow run pipeline.yml -R HyxiaoGe/agent-tools -f service=<all|gateway|image|search|reader|trends|amap|context7|weather|flyai|tmap|maps|playground>
+gh workflow run pipeline.yml -R HyxiaoGe/agent-tools -f service=<all|gateway|image|search|reader|trends|amap|context7|weather|flyai|tmap|maps|sandbox|playground>
 ```
 
-dev 上每个服务的 `.env` 放在部署目录对应的 `services/<name>/.env`（网关是 `gateway/.env`），不入库；生图结果与用量库在 `services/image/storage`，网关用量库在 `gateway/storage`。
+dev 上每个服务的 `.env` 放在部署目录对应的 `services/<name>/.env`（网关是 `gateway/.env`），不入库；生图结果与用量库在 `services/image/storage`，网关用量库在 `gateway/storage`，沙箱的工作目录在 `services/sandbox/storage`（里面的目录归 root 和 uid 10001，普通用户看不了、删不了）。
 
 ## 历史
 
