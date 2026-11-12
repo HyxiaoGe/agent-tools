@@ -10,4 +10,5 @@
 - 给调用方的 `message` 用英文（会原样给到模型）；不带宿主路径和 Docker 的报错原文。
 - 没起容器的失败要带 `counted=False`（响应头 `X-Upstream-Calls: 0`），网关才不会算进每日次数。
 - 镜像一个两用，服务和沙箱容器共用：不要把 `/app/.venv/bin` 放进镜像的 `PATH`，不要放开 `/app` 的权限。
+- `runtime/` 里是装进镜像、给沙箱里的命令用的东西（包清单、`convert-doc` 和它的样式），不是服务的代码。`convert-doc` 打印的话是给模型看的，用英文。字体、Word 模板这类二进制文件在构建镜像时生成，不放进仓库。
 - 单测用 `tests/conftest.py` 里的假 docker 在本机直接跑命令，验的是服务的逻辑，不是隔离；隔离靠 `scripts/smoke_sandbox.py` 在 dev 上真跑。

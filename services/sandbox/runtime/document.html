@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="$lang$">
+<head>
+<meta charset="utf-8">
+<title>$pagetitle$</title>
+$-- 代码高亮的样式放在前面，document.css（在 header-includes 里）排在后面，才盖得住它
+$if(highlighting-css)$
+<style>
+$highlighting-css$
+</style>
+$endif$
+$for(header-includes)$
+$header-includes$
+$endfor$
+</head>
+<body>
+$body$
+</body>
+</html>

@@ -50,7 +50,7 @@ flowchart LR
 | [flyai](services/flyai/README.md) | 航班 / 高铁查询：FlyAI 第三方 CLI 的隔离适配器，服务端持有 API Key；MCP 工具 `search_flights`、`search_trains`（参数规整、先筛后截、认不出的地名报错，Fusion 和灵稿共用），另有两个 REST 查询接口 | MCP、REST |
 | [tmap](services/tmap/README.md) | 腾讯地图：地点搜索、逆地址解析、路线与距离矩阵（官方 MCP 的代理，服务端持有密钥、只放行只读工具） | MCP |
 | [maps](services/maps/README.md) | 地图组合层：MCP 工具 `place_search`、`route_compare`（地名解析、重名、当前位置、整理结果，Fusion 和灵稿共用）；直接调高德、腾讯的 Web 服务，每次上游请求先高德，额度用尽或出错时转腾讯 | MCP |
-| [sandbox](services/sandbox/README.md) | 沙箱执行：给一个工作目录、跑一条命令、交回输出和产出的文件；每条命令一个 gVisor 隔离的一次性容器，断网、根文件系统只读、有内存 / CPU / 进程数 / 时间上限，预装 Python 数据分析的包 | REST |
+| [sandbox](services/sandbox/README.md) | 沙箱执行：给一个工作目录、跑一条命令、交回输出和产出的文件；每条命令一个 gVisor 隔离的一次性容器，断网、根文件系统只读、有内存 / CPU / 进程数 / 时间上限，预装 Python 数据分析的包和出文档的命令（Markdown 转 PDF / Word） | REST |
 
 ## 工具展示与在线试用
 

@@ -13,3 +13,10 @@ xlrd
 tabulate
 # 猜 CSV 的编码（GBK / UTF-8）
 charset-normalizer
+# 文档：convert-doc 出 PDF 用 weasyprint、画公式用 ziamath（见 runtime/convert_doc.py）；
+# python-docx、python-pptx 读写 Word、PPT；pypdf 读、拆、并 PDF
+weasyprint
+ziamath
+python-docx
+python-pptx
+pypdf
