@@ -1,0 +1,105 @@
+/* convert-doc 出 PDF、HTML 时的版式（见 convert_doc.py）。A4，中文用 Noto Sans CJK SC。 */
+@page {
+  size: A4;
+  margin: 22mm 20mm 22mm 20mm;
+  @bottom-center {
+    content: counter(page) " / " counter(pages);
+    font-family: "Noto Sans CJK SC", "WenQuanYi Micro Hei", sans-serif;
+    font-size: 8.5pt;
+    color: #8b949e;
+  }
+}
+/* 字体列表里不写表情字体：表情由排版自己另找彩色字体（缘由见 fonts-emoji.conf） */
+html {
+  font-family: "Noto Sans CJK SC", "WenQuanYi Micro Hei", "DejaVu Sans", sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.75;
+  color: #1f2328;
+}
+body { margin: 0; }
+@media screen {
+  body { max-width: 800px; margin: 32px auto; padding: 0 24px; }
+}
+
+h1, h2, h3, h4, h5, h6 { font-weight: 700; color: #0d1117; line-height: 1.4; break-after: avoid; }
+h1 { font-size: 20pt; margin: 0 0 14pt; }
+h2 { font-size: 14pt; margin: 22pt 0 9pt; padding-bottom: 4pt; border-bottom: 0.6pt solid #d0d7de; }
+h3 { font-size: 12pt; margin: 16pt 0 6pt; }
+h4, h5, h6 { font-size: 10.5pt; margin: 12pt 0 4pt; }
+h1:first-child, h2:first-child, h3:first-child { margin-top: 0; }
+
+p { margin: 0 0 8pt; orphans: 2; widows: 2; }
+strong { font-weight: 700; }
+a { color: #0b57d0; text-decoration: none; overflow-wrap: anywhere; }
+sup, sub { font-size: 0.72em; line-height: 0; }
+hr { border: 0; border-top: 0.6pt solid #d0d7de; margin: 14pt 0; }
+/* 图不超过版心；太高的按一页放得下缩小 */
+img { max-width: 100%; max-height: 225mm; }
+p > img:only-child { display: block; margin: 6pt auto; }
+figure { margin: 10pt 0; text-align: center; break-inside: avoid; }
+figcaption { font-size: 9pt; color: #57606a; margin-top: 3pt; }
+
+ul, ol { margin: 0 0 8pt; padding-left: 1.6em; }
+li { margin: 2pt 0; }
+li > p { margin-bottom: 3pt; }
+li > ul, li > ol { margin-bottom: 0; }
+ul.task-list { list-style: none; padding-left: 0.4em; }
+.task-box { font-family: "DejaVu Sans", sans-serif; margin-right: 0.35em; }
+
+blockquote { margin: 8pt 0; padding: 1pt 12pt; border-left: 2.5pt solid #d0d7de; color: #57606a; }
+blockquote > :last-child { margin-bottom: 0; }
+
+table { border-collapse: collapse; width: 100%; margin: 10pt 0 12pt; font-size: 9.3pt; line-height: 1.55; }
+thead { display: table-header-group; }
+tr { break-inside: avoid; }
+th, td { border: 0.6pt solid #d0d7de; padding: 4.5pt 7pt; text-align: left; vertical-align: top; }
+th { background: #f3f5f7; font-weight: 700; }
+/* 格子里的字只在字与字、词与词之间断行，数字不会被拦腰断开。下面的类名是 convert-doc 估过宽度以后标上的
+   （convert_doc.py 的 size_tables，这里的字号、留白改了那边的 TABLE_SIZES 要跟着改）：
+   long：格子里有一长串断不开的字（哈希、网址），许它在任意位置断；keep：短表头，不折行；
+   small、smaller：正常字号放不下的表格，字和留白小一号、再小一号；cramped：还放不下，所有格子都许任意断。 */
+th, td { overflow-wrap: break-word; }
+th.long, td.long { overflow-wrap: anywhere; }
+th.keep { white-space: nowrap; }
+table.small { font-size: 8pt; }
+table.small th, table.small td { padding: 3.5pt 4pt; }
+table.smaller { font-size: 7pt; }
+table.smaller th, table.smaller td { padding: 2.5pt 3pt; }
+table.cramped th, table.cramped td { overflow-wrap: anywhere; }
+/* 第一列多半是“维度”“指标”这样的行名：别的列字多时，别把它挤成两个字一行 */
+th:first-child, td:first-child { min-width: 4.6em; }
+caption { font-size: 9pt; color: #57606a; margin-bottom: 4pt; }
+
+code, pre, kbd, samp { font-family: "Noto Sans Mono CJK SC", "DejaVu Sans Mono", monospace; }
+code { font-size: 0.9em; }
+:not(pre) > code { background: #eff1f3; padding: 0.5pt 3pt; border-radius: 2pt; overflow-wrap: anywhere; }
+pre {
+  margin: 8pt 0 10pt;
+  padding: 8pt 10pt;
+  background: #f6f8fa;
+  border: 0.6pt solid #e1e4e8;
+  border-radius: 3pt;
+  font-size: 8.6pt;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+pre code { font-size: inherit; background: none; padding: 0; }
+/* 高亮过的代码块外面多一层 div.sourceCode，上下的间距放在这一层 */
+div.sourceCode { margin: 8pt 0 10pt; }
+div.sourceCode > pre { margin: 0; }
+/* 高亮过的代码一行一个 span（行间的换行符 convert-doc 已经去掉），排成一行一块；折下来的部分缩进两格；空行留一行的高度 */
+pre > code.sourceCode { display: block; }
+pre > code.sourceCode > span { display: block; text-indent: -2em; padding-left: 2em; min-height: 1.5em; }
+/* 分页时不把第一行、最后一行单独留在一页上 */
+pre > code.sourceCode > span:first-child { break-after: avoid; }
+pre > code.sourceCode > span:last-child { break-before: avoid; }
+
+/* 公式：出 PDF 时每条是一张 SVG 图（行内的按基线对齐，写在图自己的 style 里）；画不了的是 TeX 原文 */
+span.math.display { display: block; text-align: center; margin: 10pt 0; }
+img.math { max-height: none; }
+math { font-size: 1.1em; }
+
+/* 脚注 */
+section.footnotes, div.footnotes { font-size: 9pt; color: #57606a; margin-top: 18pt; }
+section.footnotes hr, div.footnotes hr { margin-bottom: 8pt; }

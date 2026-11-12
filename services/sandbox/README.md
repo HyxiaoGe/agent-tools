@@ -2,7 +2,7 @@
 
 沙箱执行服务：让产品里的模型能跑命令（分析表格、画图、写了脚本跑一下），命令跑在隔离的一次性容器里。产品经网关 `/sandbox/...` 调用，网关 `PRODUCTS` 里要给产品加上 `sandbox` 才放行（不在默认列表里）。
 
-第一版只做“给一个工作目录、跑一条命令、把结果和产出的文件交回去”。不联网、不装包、不流式输出、不做网页预览。
+只做“给一个工作目录、跑一条命令、把结果和产出的文件交回去”。不联网、不装包、不流式输出、不做网页预览。镜像里除了分析数据的包，还有一条出文档的命令 `convert-doc`（Markdown 转 PDF / Word，见下面“出文档”）。
 
 ## 隔离
 
@@ -17,7 +17,7 @@
 
 进程数有两道：`--ulimit nproc` 管沙箱里看得到的进程，准；`--pids-limit` 在 gVisor 下数的是宿主上的线程（gVisor 自己空转就占 40 个左右），只当兜底、设得宽（512）。
 
-镜像一个两用：服务自己用它跑，跑命令的容器也用它。命令能用的是系统 Python 3.12 和 `runtime/requirements.in` 里的包（numpy、pandas、matplotlib、seaborn、scipy、openpyxl、xlrd、tabulate、charset-normalizer），中文字体是文泉驿微米黑，matplotlib 默认就用它。服务自己的代码和 `docker` 命令行在 `/app`，沙箱里的用户进不去。
+镜像一个两用：服务自己用它跑，跑命令的容器也用它。命令能用的是系统 Python 3.12 和 `runtime/requirements.in` 里的包：分析数据的（numpy、pandas、matplotlib、seaborn、scipy、openpyxl、xlrd、tabulate、charset-normalizer）和读写文档的（python-docx、python-pptx、pypdf、weasyprint），另有 pandoc 和 `convert-doc`。图表里的中文用文泉驿微米黑（matplotlib 默认就用它），文档里的中文用 Noto Sans CJK SC。服务自己的代码和 `docker` 命令行在 `/app`，沙箱里的用户进不去。镜像 1.0 GB（加文档这一套之前 641 MB，多出来的主要是 Noto CJK 字体和 pandoc）。
 
 ## 这个服务自己的风险
 
@@ -76,6 +76,44 @@
 
 `GET /health`：`{"status": "ok", "ready": true, "reason": null}`。服务活着但起不了容器时 `ready` 是 `false`，`reason` 是 `docker_unreachable` / `runtime_missing` / `image_missing` / `host_path_unknown` / `run_failed`，之后每 10 秒在有请求时重探一次。
 
+## 出文档
+
+`convert-doc` 把一份 Markdown 或 HTML 转成 PDF、Word，输出格式看输出文件的后缀：
+
+```bash
+convert-doc 报告.md outputs/报告.pdf
+convert-doc 报告.md outputs/报告.docx
+convert-doc 页面.html outputs/页面.pdf      # HTML 只能转 PDF
+```
+
+排版是固定的。让模型每次自己写排版代码的话，同一份报告每次转出来不一样，中文字体、分页、表格宽度这些坑也要每次重踩一遍；固定下来，模型只管把内容写对。成功时输出一句写了什么（页数、大小），有取不到的图、画不了的公式也在这句后面说清楚；失败时退出码非 0，标准错误里一句话。这些话原样给到模型，用英文。
+
+Markdown 按聊天页面的规矩读（GFM，单个换行就是换行，`$…$`、`\(…\)`、单独一行的 `\[` `\]` 是公式），页面上看到什么样，转出来就是什么内容。
+
+- **PDF**：pandoc 出 HTML，WeasyPrint 排成 A4，带页码和书签。样式在 `runtime/document.css`。
+- **Word**：pandoc 直接出。样式模板 `reference.docx` 在构建镜像时由 `runtime/make_reference_docx.py` 生成（仓库里不放二进制文件），公式是 Word 自己的公式，可以接着改。
+- 沙箱不联网，文档里引用的网上的图取不到，会留下图的说明文字并在输出里列出来。本地的图按文档所在目录、当前目录找。
+
+几处是实测踩了坑才这样做的（2026-11-12，dev，和正式一样的隔离参数：gVisor、1 核、1 GiB）：
+
+- **公式**：WeasyPrint 不会排 MathML，所以出 PDF 时每条公式先用 ziamath 画成 SVG。数学字体里没有中文，公式里的中文另指一份字体画（构建时从文泉驿微米黑里拆出来，`runtime/make_math_font.py`）。画不了的公式照 TeX 原文留着，并在输出里报数。
+- **表情字体抢数字**：Noto Color Emoji 里也有 0–9（全角那么宽）。网页常见的字体清单会点表情字体的名（Bootstrap 默认就这样写），数字就被它画成了全角的。`runtime/fonts-emoji.conf` 把“按名字要表情字体”的请求去掉；表情本身靠缺字时的回退照样画成彩色的。
+- **高亮过的代码很慢**：pandoc 给每行代码套一个 `inline-block`，WeasyPrint 排 260 行要 23 秒，比一页长的代码块还分不了页。改成每行单独一块之后是 8 秒、能分页。高亮的代码每行约 20 毫秒，不高亮的 1.5 毫秒，所以超过 1000 行就不高亮了，免得排到超时。
+- **表格**：格子里的数字、单词不拦腰断开（“1,000”不会变成两行）；这样列多的表格可能比页面宽，就按内容估出每列最窄要多宽，放不下换小一号字（两档），还放不下才允许任意断。Word 那边 pandoc 默认把各列写成一样宽，LibreOffice 打开不会自己调，所以由 `runtime/table_widths.lua` 按内容把列宽定好。
+
+实测的耗时和内存（同上的环境，命令的上限是 120 秒、1 GiB）：
+
+| 文档 | PDF | Word |
+| --- | --- | --- |
+| 3 页的报告（表格、代码、公式、一张图） | 3 秒，320 MB | 0.8 秒，220 MB |
+| 23 页的报告 | 7 秒，380 MB | 2 秒，250 MB |
+| 260 行高亮代码加几张宽表格（6 页） | 8 秒，300 MB | 0.6 秒，220 MB |
+| 一张网页（HTML） | 2 秒，200 MB | 不支持 |
+
+Word 文件是用 LibreOffice 排成 PDF 看的（标题、列表、表格、代码、页码、公式都在）；没有在 Microsoft Word、WPS 里打开核对过。
+
+装了 python-docx、python-pptx、pypdf，命令也可以自己写代码读写 Word、PPT、PDF 文件。
+
 ## 数据
 
 工作目录在 `storage/workspaces/<产品>/<工作区>/`（compose 把 `./storage` 挂成 `/data`；跑命令的容器直接挂宿主上的这个目录，服务启动时从自己的挂载信息里查出宿主路径）。目录归 uid 10001、权限 700，宿主上别的普通用户看不到里面。`storage/meta/` 里记每个工作区最后一次用的时间，7 天没用过的每小时清一次。
@@ -94,10 +132,12 @@ uv run pytest -q        # 用一个假的 docker 脚本在本机直接跑命令�
 ruff check . && ruff format --check .
 ```
 
-真实的隔离只能在装了 gVisor 的机器上验：`docker exec -i sandbox-service python - < scripts/smoke_sandbox.py`（部署流水线每次都跑），它真起容器，检查内核是 gVisor、断网、只读的地方写不了、图表里的中文画得出来、超时、内存和进程数上限生效、跑完不留容器。
+真实的隔离只能在装了 gVisor 的机器上验：`docker exec -i sandbox-service python - < scripts/smoke_sandbox.py`（部署流水线每次都跑），它真起容器，检查内核是 gVisor、断网、只读的地方写不了、图表里的中文画得出来、一份报告转得成 PDF 和 Word（图和公式都在、数字没被表情字体画）、超时、内存和进程数上限生效、跑完不留容器。
+
+`convert-doc` 的单测（`tests/test_convert_doc.py`）只管不靠 pandoc 和排版程序的那部分；真转一份文档在冒烟里跑。改排版（`runtime/document.css`、`make_reference_docx.py`、`table_widths.lua`）要在 dev 上起临时镜像真转一份，把 PDF 取回来看。
 
 改沙箱里的包：改 `runtime/requirements.in`，按文件头上的命令重新生成 `runtime/requirements.txt`。
 
 ## 还没做的
 
-联网（装包要走白名单代理）、流式输出、网页预览、同时跑多条命令（现在是 1 条，dev 内存紧）、全部工作区加起来的磁盘总上限、Office 文档相关的包。
+联网（装包要走白名单代理）、流式输出、网页预览、同时跑多条命令（现在是 1 条，dev 内存紧）、全部工作区加起来的磁盘总上限。

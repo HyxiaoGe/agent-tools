@@ -1,7 +1,7 @@
 """部署冒烟：在 sandbox-service 容器内真跑几条命令，确认隔离在、装的包能用、超时杀得掉、文件取得回来。
 
-一共起五个沙箱容器：分析表格出图（顺带查内核是 gVisor、断网、改不了只读的地方）、不留 __pycache__、
-超时、进程数上限、内存上限（会真的占满 1 GiB 再被杀掉，一两秒）。不经网关，不占每日次数。
+一共起六个沙箱容器：分析表格出图（顺带查内核是 gVisor、断网、改不了只读的地方）、不留 __pycache__、
+把一份报告转成 PDF 和 Word、超时、进程数上限、内存上限（会真的占满 1 GiB 再被杀掉，一两秒）。不经网关，不占每日次数。
 
 用法：docker exec -i sandbox-service python - < scripts/smoke_sandbox.py
 """
@@ -65,6 +65,71 @@ df.assign(利润=df["销售额"] - df["成本"]).to_excel("outputs/汇总.xlsx",
 print(json.dumps(facts, ensure_ascii=False))
 PY
 python analyze.py
+"""
+
+# 一份小报告：中文、带中文的公式、右对齐的数字和一长段说明的表格、代码、上一步画的图、表情。
+# 报告放在 uploads/（只读），图在 outputs/：产品就是这么放的，图要按当前目录找得到
+REPORT = r"""# 季度经营报告
+
+**结论**：转化率 $\text{转化率} = \frac{\text{下单人数}}{\text{访问人数}}$ 比去年高，另有 \(E = mc^2\)。
+
+| 指标 | 2024 年 | 2025 年 | 说明 |
+| --- | ---: | ---: | --- |
+| 收入 | 1,000 | 1,250 | 这一格的说明故意写得长一些，用来看各列的宽度是不是按内容分的，而不是每列一样宽 |
+
+```python
+print("你好")
+```
+
+![各月销售额](outputs/图表.png)
+
+- [x] 做完的 ✅
+""".encode()
+
+# 一张网页，字体清单里点了表情字体的名（Bootstrap 之类的默认写法）：数字不该因此用表情字体里的全角数字来画
+PAGE = b"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+body { font-family: "Segoe UI", Roboto, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+</style></head><body><p>0123456789</p></body></html>
+"""
+
+DOCUMENTS = r"""
+set -e
+convert-doc uploads/报告.md outputs/报告.pdf
+convert-doc uploads/报告.md outputs/报告.docx
+convert-doc uploads/页面.html outputs/页面.pdf
+python - <<'PY'
+import json, re, zipfile
+
+import docx, pptx
+from pypdf import PdfReader
+
+
+def fonts(reader):
+    names = set()
+    for page in reader.pages:
+        for font in (page["/Resources"].get("/Font") or {}).values():
+            names.add(str(font.get_object()["/BaseFont"]))
+    return sorted(names)
+
+
+report = PdfReader("outputs/报告.pdf")
+package = zipfile.ZipFile("outputs/报告.docx")
+body = package.read("word/document.xml").decode()
+facts = {
+    "pages": len(report.pages),
+    "text": report.pages[0].extract_text()[:40],
+    # 只数大图：表情在 PDF 里也是一张小图
+    "pictures": sum(image.image.width >= 300 for page in report.pages for image in page.images),
+    "report_fonts": fonts(report),
+    "page_fonts": fonts(PdfReader("outputs/页面.pdf")),
+    "word_paragraphs": len(docx.Document("outputs/报告.docx").paragraphs),
+    "word_formulas": body.count("<m:oMath>"),
+    "word_columns": [int(width) for width in re.findall(r'<w:gridCol w:w="(\d+)"', body)],
+    "word_pictures": sum(name.startswith("word/media/") for name in package.namelist()),
+    "pptx": pptx.__version__,
+}
+print(json.dumps(facts, ensure_ascii=False))
+PY
 """
 
 FORK = r"""python - <<'PY'
@@ -159,19 +224,49 @@ def main():
     check("__pycache__" not in result["stdout"], f"bytecode cache written into the workspace: {result['stdout']}")
     print(f"second run ok in {result['duration_ms']} ms")
 
-    # 3. 超时
+    # 3. 出文档：报告转成 PDF、Word，网页转成 PDF
+    for path, content in (("uploads/报告.md", REPORT), ("uploads/页面.html", PAGE)):
+        status, raw = call("PUT", f"/v1/workspaces/{WORKSPACE}/file", params={"path": path}, body=content)
+        check(status == 200, f"upload of {path} returned {status}: {raw[:200]!r}")
+    result = run(DOCUMENTS)
+    check(result["exit_code"] == 0, f"conversion exited {result['exit_code']}: {result['stderr'][-600:]}")
+    notes, _, last = result["stdout"].strip().rpartition("\n")
+    facts = json.loads(last)
+    # 图取到了、公式都画出来了：不然 convert-doc 会在输出里说
+    check("Left out" not in notes and "could not be typeset" not in notes, f"conversion left things out: {notes}")
+    check(facts["pages"] >= 1 and "季度经营报告" in facts["text"], f"PDF text is not readable: {facts}")
+    check(facts["pictures"] == 1, f"the chart is not in the PDF: {facts}")
+    names = " ".join(facts["report_fonts"]).lower()
+    check("cjk" in names and "emoji" in names, f"PDF is missing the Chinese or the emoji font: {facts}")
+    check(
+        facts["page_fonts"] and "emoji" not in " ".join(facts["page_fonts"]).lower(),
+        f"digits were drawn with the emoji font: {facts}",
+    )
+    check(facts["word_paragraphs"] > 3 and facts["word_formulas"] == 2, f"Word file is incomplete: {facts}")
+    check(facts["word_pictures"] == 1, f"the chart is not in the Word file: {facts}")
+    columns = facts["word_columns"]
+    check(len(columns) == 4 and columns[3] > 2 * columns[1], f"table columns were not sized by content: {facts}")
+    changed = {item["path"] for item in result["changed"]}
+    check({"outputs/报告.pdf", "outputs/报告.docx"} <= changed, f"documents missing from changed: {sorted(changed)}")
+    for path, magic in (("outputs/报告.pdf", b"%PDF-"), ("outputs/报告.docx", b"PK\x03\x04")):
+        status, raw = call("GET", f"/v1/workspaces/{WORKSPACE}/file", params={"path": path})
+        check(status == 200 and raw.startswith(magic) and len(raw) > 5000, f"{path} is not a real document")
+    check(result["duration_ms"] < 40_000, f"conversion took too long: {result['duration_ms']} ms")
+    print(f"documents ok in {result['duration_ms']} ms, python-pptx {facts['pptx']}")
+
+    # 4. 超时
     result = run("echo started; sleep 60", timeout_seconds=2)
     check(result["killed"] == "timeout" and result["stdout"] == "started\n", f"timeout not enforced: {result}")
     check(result["duration_ms"] < 20_000, f"timeout took too long: {result['duration_ms']} ms")
     print(f"timeout ok in {result['duration_ms']} ms")
 
-    # 4. 进程数上限
+    # 5. 进程数上限
     result = run(FORK, timeout_seconds=30)
     count, _, reason = result["stdout"].strip().partition(" ")
     check(count.isdigit() and int(count) < 200 and reason != "unlimited", f"process limit not enforced: {result}")
     print(f"process limit ok: stopped at {count} ({reason})")
 
-    # 5. 内存上限：要的比上限多，整个沙箱被系统杀掉，服务要说得出原因
+    # 6. 内存上限：要的比上限多，整个沙箱被系统杀掉，服务要说得出原因
     result = run("python -c \"x = b'a' * (3 * 1024 ** 3); print(len(x))\"", timeout_seconds=60)
     check(result["killed"] == "memory" and result["exit_code"] == 137, f"memory limit not enforced: {result}")
     print(f"memory limit ok in {result['duration_ms']} ms")
