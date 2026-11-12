@@ -20,3 +20,13 @@ ziamath
 python-docx
 python-pptx
 pypdf
+# PDF 里的表格、按位置取文字（pypdf 只管整页的文字和拆并）
+pdfplumber
+# 机器学习、统计模型：回归、分类、聚类、时间序列、检验
+scikit-learn
+statsmodels
+# 能点、能缩放的图表：fig.write_html() 出一个 HTML 文件，在用户的浏览器里画
+plotly
+# 跑测试、查代码和排格式（ruff check / ruff format）
+pytest
+ruff
