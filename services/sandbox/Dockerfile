@@ -32,9 +32,13 @@ RUN pip install --no-cache-dir --require-hashes -r /opt/sandbox/requirements.txt
 # 不往仓库里放二进制文件。
 # 字体的缓存也在这里建好：沙箱的根文件系统只读，每条命令又是新容器，不建的话每次都要重扫一遍字体。
 # fonts-emoji.conf 的文件名要排在系统自带的 45-generic.conf 前面才管用（缘由写在文件里）。
+# 开头先把行尾的回车去掉：镜像在 Windows 的构建机上构建，检出来的文件是 CRLF，convert_doc.py 第一行成了
+# “#!/usr/local/bin/python3\r”，命令起不来（2026-11-12 第一次部署，冒烟报 cannot execute: required file not found）。
+# 这时 /opt/sandbox 里只有文本文件（包清单、matplotlibrc 和刚拷进来的这些）；要往这里拷二进制文件的话，放到这一步后面。
 COPY runtime/convert_doc.py runtime/make_reference_docx.py runtime/make_math_font.py runtime/table_widths.lua \
      runtime/document.css runtime/document.html runtime/fonts.conf runtime/fonts-emoji.conf /opt/sandbox/
-RUN cp /opt/sandbox/fonts.conf /etc/fonts/local.conf \
+RUN sed -i 's/\r$//' /opt/sandbox/* \
+    && cp /opt/sandbox/fonts.conf /etc/fonts/local.conf \
     && cp /opt/sandbox/fonts-emoji.conf /etc/fonts/conf.d/44-sandbox-emoji.conf \
     && fc-cache -f \
     && python /opt/sandbox/make_reference_docx.py /opt/sandbox/reference.docx \
