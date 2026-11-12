@@ -90,13 +90,15 @@ convert-doc 页面.html outputs/页面.pdf      # HTML 只能转 PDF
 
 Markdown 按聊天页面的规矩读（GFM，单个换行就是换行，`$…$`、`\(…\)`、单独一行的 `\[` `\]` 是公式），页面上看到什么样，转出来就是什么内容。
 
+`$` 什么时候算公式也照页面的：开头的 `$` 后面紧跟非空白，收尾的 `$` 前面紧跟非空白、后面不是数字；不成对的是钱数，转义成字面的 `$`（`convert_doc.py` 的 `_dollars`，和灵稿 `frontend/src/markdown.jsx` 的 `prepLine` 一个写法，改一边要改另一边）。pandoc 读 GFM 时没有“后面不是数字”这一条，不先转义的话，“$100–$200/月”里的“100–”会被当成公式（2026-11-12 真实模型写的定价报告里见到，PDF、Word 里钱数都花了）。
+
 - **PDF**：pandoc 出 HTML，WeasyPrint 排成 A4，带页码和书签。样式在 `runtime/document.css`。
 - **Word**：pandoc 直接出。样式模板 `reference.docx` 在构建镜像时由 `runtime/make_reference_docx.py` 生成（仓库里不放二进制文件），公式是 Word 自己的公式，可以接着改。
 - 沙箱不联网，文档里引用的网上的图取不到，会留下图的说明文字并在输出里列出来。本地的图按文档所在目录、当前目录找。
 
 几处是实测踩了坑才这样做的（2026-11-12，dev，和正式一样的隔离参数：gVisor、1 核、1 GiB）：
 
-- **公式**：WeasyPrint 不会排 MathML，所以出 PDF 时每条公式先用 ziamath 画成 SVG。数学字体里没有中文，公式里的中文另指一份字体画（构建时从文泉驿微米黑里拆出来，`runtime/make_math_font.py`）。画不了的公式照 TeX 原文留着，并在输出里报数。
+- **公式**：WeasyPrint 不会排 MathML，所以出 PDF 时每条公式先用 ziamath 画成 SVG。数学字体里没有中文，公式里的中文另指一份字体画（构建时从文泉驿微米黑里拆出来，`runtime/make_math_font.py`）。画不了的公式照 TeX 原文留着，并在输出里报数。行内的公式留在字里行间，单独成行的（`$$`）居中；一段里只有一张图时那张图也居中，这条样式不算公式的图（`:only-child` 不看旁边的字，一段字里只有一个行内公式时，它会被单拎出去占一行）。
 - **表情字体抢数字**：Noto Color Emoji 里也有 0–9（全角那么宽）。网页常见的字体清单会点表情字体的名（Bootstrap 默认就这样写），数字就被它画成了全角的。`runtime/fonts-emoji.conf` 把“按名字要表情字体”的请求去掉；表情本身靠缺字时的回退照样画成彩色的。
 - **高亮过的代码很慢**：pandoc 给每行代码套一个 `inline-block`，WeasyPrint 排 260 行要 23 秒，比一页长的代码块还分不了页。改成每行单独一块之后是 8 秒、能分页。高亮的代码每行约 20 毫秒，不高亮的 1.5 毫秒，所以超过 1000 行就不高亮了，免得排到超时。
 - **表格**：格子里的数字、单词不拦腰断开（“1,000”不会变成两行）；这样列多的表格可能比页面宽，就按内容估出每列最窄要多宽，放不下换小一号字（两档），还放不下才允许任意断。Word 那边 pandoc 默认把各列写成一样宽，LibreOffice 打开不会自己调，所以由 `runtime/table_widths.lua` 按内容把列宽定好。
@@ -132,7 +134,7 @@ uv run pytest -q        # 用一个假的 docker 脚本在本机直接跑命令�
 ruff check . && ruff format --check .
 ```
 
-真实的隔离只能在装了 gVisor 的机器上验：`docker exec -i sandbox-service python - < scripts/smoke_sandbox.py`（部署流水线每次都跑），它真起容器，检查内核是 gVisor、断网、只读的地方写不了、图表里的中文画得出来、一份报告转得成 PDF 和 Word（图和公式都在、数字没被表情字体画）、超时、内存和进程数上限生效、跑完不留容器。
+真实的隔离只能在装了 gVisor 的机器上验：`docker exec -i sandbox-service python - < scripts/smoke_sandbox.py`（部署流水线每次都跑），它真起容器，检查内核是 gVisor、断网、只读的地方写不了、图表里的中文画得出来、一份报告转得成 PDF 和 Word（图和公式都在、钱数没被当成公式、数字没被表情字体画）、超时、内存和进程数上限生效、跑完不留容器。
 
 `convert-doc` 的单测（`tests/test_convert_doc.py`）只管不靠 pandoc 和排版程序的那部分；真转一份文档在冒烟里跑。改排版（`runtime/document.css`、`make_reference_docx.py`、`table_widths.lua`）要在 dev 上起临时镜像真转一份，把 PDF 取回来看。
 

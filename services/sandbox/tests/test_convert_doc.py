@@ -56,6 +56,54 @@ def test_prepare_normalizes_windows_line_endings():
     assert convert_doc.prepare("a\r\nb") == "a\nb"
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # 钱数：两个 $ 之间不成公式，都转义（2026-11-12 真实报告里的三句）
+        ("Max 档另附 $100–$200/月 API 额度 [2]。", r"Max 档另附 \$100–\$200/月 API 额度 [2]。"),
+        (
+            "Plus（$8）< Copilot Pro（$10）< Claude Pro（$17–20）。",
+            r"Plus（\$8）< Copilot Pro（\$10）< Claude Pro（\$17–20）。",
+        ),
+        (
+            "| 入门付费 | Plus $8/月 | Pro $20/月（$17 年付） |",
+            r"| 入门付费 | Plus \$8/月 | Pro \$20/月（\$17 年付） |",
+        ),
+        ("从 $5 涨到 $10", r"从 \$5 涨到 \$10"),
+        ("一共 $5", r"一共 \$5"),
+        # 公式：留着
+        ("质能方程 $E=mc^2$ 不变", "质能方程 $E=mc^2$ 不变"),
+        ("$x$ 和 $y$", "$x$ 和 $y$"),
+        ("结尾是公式 $a+b$", "结尾是公式 $a+b$"),
+        (r"集合 $\{a\}$，带钱的公式 $p = \$5$", r"集合 $\{a\}$，带钱的公式 $p = \$5$"),
+        # 钱数和公式在一行
+        ("价格 $20，公式 $a+b$", r"价格 \$20，公式 $a+b$"),
+        # 开头的 $ 后面是空白、收尾的 $ 前面是空白：不是公式
+        ("a $ b $ c", r"a \$ b \$ c"),
+        ("$a $", r"\$a \$"),
+        # 已经转义的不再动；$$ 写在一行里的原样留着，落单的转义
+        (r"已经写成 \$5 的", r"已经写成 \$5 的"),
+        ("行内的 $$x^2$$ 留着", "行内的 $$x^2$$ 留着"),
+        ("落单的 $$ 两个", r"落单的 \$\$ 两个"),
+        # 行内代码里不动
+        ("命令 `echo $HOME $PATH` 和 $5", r"命令 `echo $HOME $PATH` 和 \$5"),
+    ],
+)
+def test_prepare_keeps_formulas_and_escapes_other_dollars(text: str, expected: str):
+    assert convert_doc.prepare(text) == expected
+
+
+def test_prepare_leaves_display_blocks_and_code_dollars_alone():
+    block = "$$\nprice = $5 + $6\n$$"
+    assert convert_doc.prepare(block) == block
+    # 收尾的 $$ 写在最后一行公式后面；出了公式块，钱数照样转义
+    assert convert_doc.prepare("$$\na = $5\nb = 1$$\n之后 $7") == "$$\na = $5\nb = 1$$\n之后 \\$7"
+    # \[ \] 换成的公式块里也不动
+    assert convert_doc.prepare("\\[\nc = $5\n\\]\n之后 $7") == "$$\nc = $5\n$$\n之后 \\$7"
+    fenced = "```bash\necho $HOME costs $5\n```"
+    assert convert_doc.prepare(fenced) == fenced
+
+
 def test_first_heading_skips_code_and_strips_marks():
     assert convert_doc.first_heading("```\n# 代码里的\n```\n\n# **季度** `报告` #\n\n# 第二个") == "季度 报告"
     assert convert_doc.first_heading("## 只有二级标题\n正文") == ""
@@ -221,6 +269,49 @@ def test_draw_math_falls_back_to_tex_when_it_cannot_draw(monkeypatch):
     html, failed = convert_doc.draw_math(f"<p>前 {source} 后 {source}</p>")
     assert html == '<p>前 <code class="math-tex">a &lt; b</code> 后 <code class="math-tex">a &lt; b</code></p>'
     assert failed == 2
+
+
+class _FakeZiamath:
+    """只够 _draw 用的 ziamath：记下画的是哪一条，回一张空图。"""
+
+    class _Font:
+        class alt_fonts:  # noqa: N801
+            bold = None
+
+    class zmath:  # noqa: N801
+        loadedfonts = {"default": None}
+
+    class config:  # noqa: N801
+        class math:  # noqa: N801
+            bold_font = None
+
+    class Math:
+        def __init__(self, root, size):
+            self.root = root
+
+        def svg(self) -> str:
+            return "<svg/>"
+
+        def getyofst(self) -> float:
+            return -3.0
+
+
+_FakeZiamath.zmath.loadedfonts["default"] = _FakeZiamath._Font
+
+
+def test_draw_keeps_inline_formulas_in_the_line_and_marks_display_ones():
+    inline = convert_doc._draw(_FakeZiamath, MATHML.format(body="<mi>n</mi>", tex="n"))
+    assert inline.startswith('<img class="math" alt="n" style="vertical-align:-3.00px" src="data:image/svg+xml;base64,')
+    block = MATHML.format(body="<mi>n</mi>", tex="n").replace('display="inline"', 'display="block"')
+    display = convert_doc._draw(_FakeZiamath, block)
+    assert display.startswith('<img class="math display" alt="n" src="data:image/svg+xml;base64,')
+
+
+def test_stylesheet_centers_only_display_formulas():
+    """一段里只有一个行内公式时，它也是这一段唯一的子元素：居中那条规则不能把它算进去。"""
+    css = (SCRIPT.parent / "document.css").read_text(encoding="utf-8")
+    assert "p > img:only-child:not(.math) {" in css
+    assert "img.math.display { display: block;" in css
 
 
 def test_draw_math_leaves_pages_without_formulas_alone():
