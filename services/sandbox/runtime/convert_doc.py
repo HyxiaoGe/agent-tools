@@ -9,7 +9,7 @@
 
 排版是固定的（document.css、构建镜像时生成的 reference.docx），同一份文档每次转出来一个样子，不用调用方自己写排版代码：
 - Markdown 按聊天页面的写法读：GFM（表格、删除线、任务列表、裸链接），单个换行就是换行，
-  $...$、\\(...\\)、单独一行的 \\[ \\] 是公式。
+  $...$、\\(...\\)、单独一行的 \\[ \\] 是公式；不成对的 $ 是钱数（规矩见 _dollars）。
 - PDF：pandoc 出 HTML，WeasyPrint 排成 A4。中文用 Noto Sans CJK SC（有粗体），带页码和 PDF 书签。
   公式由 pandoc 转成 MathML，再用 ziamath 画成 SVG（WeasyPrint 不会排 MathML）；
   画不了的照 TeX 原文留着，并在输出里说一声。
@@ -62,6 +62,7 @@ _CJK = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 _INLINE_CODE = re.compile(r"(`+[^`]*?`+)")
 _PAREN_MATH = re.compile(r"\\\((.+?)\\\)")
 _BARE_PIPE = re.compile(r"(?<!\\)\|")
+_DIGITS = frozenset("0123456789")
 _CHECKBOX = re.compile(r'<input type="checkbox"( checked="")? ?/?>')
 _MATH = re.compile(r"<math\b.*?</math>", re.S)
 _CODE_LINE = re.compile(r'<span id="cb\d+-\d+">')
@@ -101,15 +102,76 @@ def _outside_fences(lines: list[str]):
         yield n, line
 
 
+def _dollars(text: str) -> str:
+    """一段字里的 $：成对、像公式的留着，别的转义成字面的 $。
+
+    pandoc 读 gfm 时，两个 $ 之间只要两头不是空白就算公式，“$100–$200/月”里的“100–”、
+    “Plus（$8）< Pro（$10）”里的“8）< Pro（”都成了公式（2026-11-12 真实模型写的定价报告，PDF 里钱数全花了）。
+    聊天页面用的是 pandoc 读自己的 markdown 时的规矩：开头的 $ 后面紧跟非空白，收尾的 $ 前面紧跟非空白、后面不是数字。
+    这里和页面（灵稿 frontend/src/markdown.jsx 的 prepLine）一个写法，改一边要改另一边。
+    """
+    out: list[str] = []
+    i, size = 0, len(text)
+    while i < size:
+        ch = text[i]
+        if ch == "\\":
+            out.append(text[i : i + 2])
+            i += 2
+            continue
+        if ch != "$":
+            out.append(ch)
+            i += 1
+            continue
+        if text.startswith("$$", i):  # $$ … $$ 写在一行里：原样留着
+            end = text.find("$$", i + 2)
+            if end > 0:
+                out.append(text[i : end + 2])
+                i = end + 2
+            else:
+                out.append("\\$\\$")
+                i += 2
+            continue
+        close = -1
+        if i + 1 < size and not text[i + 1].isspace():
+            k = i + 1
+            while k < size:
+                if text[k] == "\\":
+                    k += 2
+                    continue
+                if text[k] == "$":
+                    after = text[k + 1 : k + 2]
+                    if after != "$" and not text[k - 1].isspace() and after not in _DIGITS:
+                        close = k
+                    break
+                k += 1
+        if close > 0:
+            out.append(text[i : close + 1])
+            i = close + 1
+        else:
+            out.append("\\$")
+            i += 1
+    return "".join(out)
+
+
 def prepare(markdown: str) -> str:
-    """把聊天页面认、pandoc 不认的几种写法理成 pandoc 认的（和页面一个规矩，代码块和行内代码里不动）：
-    \\( … \\) 换成 $ … $；单独一行的 \\[ 和 \\] 换成 $$；表格那一行里，行内代码中的 | 转义（不然一格会被劈成两格）。
+    """把聊天页面认、pandoc 不认的几种写法理成 pandoc 认的（和页面一个规矩，代码块、行内代码、$$ 公式块里不动）：
+    \\( … \\) 换成 $ … $；单独一行的 \\[ 和 \\] 换成 $$；不成公式的 $（钱数）转义，见 _dollars；
+    表格那一行里，行内代码中的 | 转义（不然一格会被劈成两格）。
     """
     lines = markdown.replace("\r\n", "\n").split("\n")
+    block = False  # 在 $$ 公式块里
     for n, line in _outside_fences(lines):
         bare = line.strip()
         if bare in ("\\[", "\\]"):
             lines[n] = line.replace(bare, "$$")
+            block = bare == "\\["
+            continue
+        if bare.startswith("$$") and (bare == "$$" or "$$" not in bare[2:]):
+            block = not block
+            continue
+        if block:
+            if bare.endswith("$$"):  # 收尾的 $$ 写在最后一行公式后面
+                block = False
             continue
         row = bare.startswith("|")
         parts = _INLINE_CODE.split(line)
@@ -117,7 +179,7 @@ def prepare(markdown: str) -> str:
             if k % 2:
                 parts[k] = _BARE_PIPE.sub(r"\\|", part) if row else part
             else:
-                parts[k] = _PAREN_MATH.sub(lambda m: f"${m.group(1).strip()}$", part)
+                parts[k] = _dollars(_PAREN_MATH.sub(lambda m: f"${m.group(1).strip()}$", part))
         lines[n] = "".join(parts)
     return "\n".join(lines)
 
@@ -370,6 +432,9 @@ def _draw(zm, source: str) -> str:
         default_font.alt_fonts.bold = None
     data = base64.b64encode(svg.encode("utf-8")).decode("ascii")
     alt = html_lib.escape(tex, quote=True)
+    # 单独成行的公式标出来，居中由样式管（document.css）；行内的留在字里行间，按基线对齐
+    if root.get("display") == "block":
+        return f'<img class="math display" alt="{alt}" src="data:image/svg+xml;base64,{data}">'
     return f'<img class="math" alt="{alt}" style="vertical-align:{drop:.2f}px" src="data:image/svg+xml;base64,{data}">'
 
 

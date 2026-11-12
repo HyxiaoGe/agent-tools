@@ -67,11 +67,14 @@ PY
 python analyze.py
 """
 
-# 一份小报告：中文、带中文的公式、右对齐的数字和一长段说明的表格、代码、上一步画的图、表情。
+# 一份小报告：中文、带中文的公式、钱数（$ 不该被当成公式的记号）、右对齐的数字和一长段说明的表格、代码、
+# 上一步画的图、表情。
 # 报告放在 uploads/（只读），图在 outputs/：产品就是这么放的，图要按当前目录找得到
 REPORT = r"""# 季度经营报告
 
 **结论**：转化率 $\text{转化率} = \frac{\text{下单人数}}{\text{访问人数}}$ 比去年高，另有 \(E = mc^2\)。
+
+报价 $100–$200/月（原价 $250）。
 
 | 指标 | 2024 年 | 2025 年 | 说明 |
 | --- | ---: | ---: | --- |
@@ -118,6 +121,7 @@ body = package.read("word/document.xml").decode()
 facts = {
     "pages": len(report.pages),
     "text": report.pages[0].extract_text()[:40],
+    "dollars": sum(page.extract_text().count("$") for page in report.pages),
     # 只数大图：表情在 PDF 里也是一张小图
     "pictures": sum(image.image.width >= 300 for page in report.pages for image in page.images),
     "report_fonts": fonts(report),
@@ -235,6 +239,7 @@ def main():
     # 图取到了、公式都画出来了：不然 convert-doc 会在输出里说
     check("Left out" not in notes and "could not be typeset" not in notes, f"conversion left things out: {notes}")
     check(facts["pages"] >= 1 and "季度经营报告" in facts["text"], f"PDF text is not readable: {facts}")
+    check(facts["dollars"] == 3, f"dollar amounts were read as formulas: {facts}")
     check(facts["pictures"] == 1, f"the chart is not in the PDF: {facts}")
     names = " ".join(facts["report_fonts"]).lower()
     check("cjk" in names and "emoji" in names, f"PDF is missing the Chinese or the emoji font: {facts}")
