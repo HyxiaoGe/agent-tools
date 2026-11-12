@@ -153,6 +153,9 @@ class DockerRunner:
             "--env=PYTHONDONTWRITEBYTECODE=1",
             "--env=MPLCONFIGDIR=/tmp/matplotlib",
             "--env=MATPLOTLIBRC=/opt/sandbox/matplotlibrc",
+            # pytest、ruff 的缓存目录同理，不留在工作目录里：一个不写，一个写到 /tmp。
+            "--env=PYTEST_ADDOPTS=-p no:cacheprovider",
+            "--env=RUFF_CACHE_DIR=/tmp/ruff",
             # 容器里再包一层 timeout：服务自己掐表是主要手段，这层防的是服务中途挂掉、没人来杀。
             "--entrypoint=/usr/bin/timeout",
             self.image,

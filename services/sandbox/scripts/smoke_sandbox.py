@@ -1,7 +1,9 @@
 """部署冒烟：在 sandbox-service 容器内真跑几条命令，确认隔离在、装的包能用、超时杀得掉、文件取得回来。
 
-一共起七个沙箱容器：分析表格出图（顺带查内核是 gVisor、断网、改不了只读的地方）、不留 __pycache__、
-把一份报告转成 PDF 和 Word、做一份 PPT 再排成 PDF、超时、进程数上限、内存上限（会真的占满 1 GiB 再被杀掉，一两秒）。
+一共起八个沙箱容器：分析表格出图（顺带查内核是 gVisor、断网、改不了只读的地方）、不留 __pycache__、
+把一份报告转成 PDF 和 Word、做一份 PPT 再排成 PDF、
+后装的包（pytest、ruff、scikit-learn、statsmodels、plotly、pdfplumber）、
+超时、进程数上限、内存上限（会真的占满 1 GiB 再被杀掉，一两秒）。
 不经网关，不占每日次数。
 
 用法：docker exec -i sandbox-service python - < scripts/smoke_sandbox.py
@@ -193,6 +195,58 @@ print(json.dumps(facts, ensure_ascii=False))
 PY
 """
 
+PACKAGES = r"""
+set -e
+cat > stats.py <<'PY'
+def median(values):
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2]
+PY
+cat > test_stats.py <<'PY'
+from stats import median
+
+
+def test_median():
+    assert median([3, 1, 2]) == 2
+PY
+pytest -q test_stats.py > /dev/null
+ruff check --quiet stats.py test_stats.py
+ruff format --quiet --check stats.py test_stats.py
+python - <<'PY'
+import json
+import os
+
+import numpy as np
+import pandas as pd
+import pdfplumber
+import plotly.express as px
+import statsmodels.formula.api as smf
+from sklearn.linear_model import LinearRegression
+from weasyprint import HTML
+
+rng = np.random.default_rng(0)
+frame = pd.DataFrame({"x": np.arange(50.0)})
+frame["y"] = 3 * frame.x + 2 + rng.normal(scale=0.1, size=50)
+slope = float(LinearRegression().fit(frame[["x"]], frame.y).coef_[0])
+fitted = float(smf.ols("y ~ x", frame).fit().params["x"])
+os.makedirs("outputs", exist_ok=True)
+px.line(frame, x="x", y="y", title="趋势").write_html("outputs/趋势.html", include_plotlyjs="cdn")
+page = open("outputs/趋势.html", encoding="utf-8").read()
+rows = "".join(f"<tr><td>订单{i}</td><td>{i * 10}</td></tr>" for i in range(1, 4))
+style = "<style>table{border-collapse:collapse} td,th{border:1px solid #000;padding:4px 12px}</style>"
+HTML(string=f"{style}<table><tr><th>订单</th><th>金额</th></tr>{rows}</table>").write_pdf("表.pdf")
+with pdfplumber.open("表.pdf") as pdf:
+    table = pdf.pages[0].extract_table()
+print(json.dumps({
+    "slope": round(slope, 2),
+    "fitted": round(fitted, 2),
+    "chart": "cdn.plot.ly" in page and "Plotly.newPlot" in page,
+    "chart_bytes": len(page),
+    "table": table,
+}, ensure_ascii=False))
+PY
+"""
+
 FORK = r"""python - <<'PY'
 import os, sys, time
 children = 0
@@ -342,19 +396,33 @@ def main():
     check(result["duration_ms"] < 60_000, f"slides took too long: {result['duration_ms']} ms")
     print(f"slides ok in {result['duration_ms']} ms")
 
-    # 5. 超时
+    # 5. 后装的包：跑测试、查代码、回归、能点的图表、PDF 里的表格
+    result = run(PACKAGES)
+    check(result["exit_code"] == 0, f"packages exited {result['exit_code']}: {result['stderr'][-600:]}")
+    facts = json.loads(result["stdout"].strip().splitlines()[-1])
+    check(facts["slope"] == 3.0 and facts["fitted"] == 3.0, f"wrong regression result: {facts}")
+    check(facts["chart"] and facts["chart_bytes"] < 100_000, f"chart page is not a small CDN page: {facts}")
+    table = [["订单", "金额"], ["订单1", "10"], ["订单2", "20"], ["订单3", "30"]]
+    check(facts["table"] == table, f"wrong PDF table: {facts}")
+    changed = {item["path"] for item in result["changed"]}
+    check("outputs/趋势.html" in changed, f"chart page missing from changed: {sorted(changed)}")
+    check(not any("_cache" in path for path in changed), f"tool caches left in the workspace: {sorted(changed)}")
+    check(result["duration_ms"] < 40_000, f"packages took too long: {result['duration_ms']} ms")
+    print(f"packages ok in {result['duration_ms']} ms")
+
+    # 6. 超时
     result = run("echo started; sleep 60", timeout_seconds=2)
     check(result["killed"] == "timeout" and result["stdout"] == "started\n", f"timeout not enforced: {result}")
     check(result["duration_ms"] < 20_000, f"timeout took too long: {result['duration_ms']} ms")
     print(f"timeout ok in {result['duration_ms']} ms")
 
-    # 6. 进程数上限
+    # 7. 进程数上限
     result = run(FORK, timeout_seconds=30)
     count, _, reason = result["stdout"].strip().partition(" ")
     check(count.isdigit() and int(count) < 200 and reason != "unlimited", f"process limit not enforced: {result}")
     print(f"process limit ok: stopped at {count} ({reason})")
 
-    # 7. 内存上限：要的比上限多，整个沙箱被系统杀掉，服务要说得出原因
+    # 8. 内存上限：要的比上限多，整个沙箱被系统杀掉，服务要说得出原因
     result = run("python -c \"x = b'a' * (3 * 1024 ** 3); print(len(x))\"", timeout_seconds=60)
     check(result["killed"] == "memory" and result["exit_code"] == 137, f"memory limit not enforced: {result}")
     print(f"memory limit ok in {result['duration_ms']} ms")

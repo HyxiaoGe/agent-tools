@@ -84,6 +84,9 @@ def test_run_argv_carries_every_isolation_flag():
         "type=bind,source=/host/storage/workspaces/lingdraft/c1/uploads,target=/workspace/uploads,readonly",
     ]
     assert argv[argv.index("--tmpfs") + 1] == "/tmp:rw,nosuid,nodev,size=256m"
+    # 工具的缓存不留在工作目录里（会被当成这次运行产出的文件）。
+    for env in ("PYTHONDONTWRITEBYTECODE=1", "PYTEST_ADDOPTS=-p no:cacheprovider", "RUFF_CACHE_DIR=/tmp/ruff"):
+        assert f"--env={env}" in argv, env
     # 命令原样作为 bash -c 的唯一参数，排在最后；镜像之后是容器里 timeout 的参数。
     image_at = argv.index("agent-tools/sandbox:test")
     assert argv[image_at + 1 :] == ["--signal=KILL", "70", "/bin/bash", "-c", command]
