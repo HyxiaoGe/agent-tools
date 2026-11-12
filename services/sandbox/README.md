@@ -2,7 +2,7 @@
 
 沙箱执行服务：让产品里的模型能跑命令（分析表格、画图、写了脚本跑一下），命令跑在隔离的一次性容器里。产品经网关 `/sandbox/...` 调用，网关 `PRODUCTS` 里要给产品加上 `sandbox` 才放行（不在默认列表里）。
 
-只做“给一个工作目录、跑一条命令、把结果和产出的文件交回去”。不联网、不装包、不流式输出、不做网页预览。镜像里除了分析数据的包，还有一条出文档的命令 `convert-doc`（Markdown 转 PDF / Word，见下面“出文档”）。
+只做“给一个工作目录、跑一条命令、把结果和产出的文件交回去”。不联网、不装包、不流式输出、不做网页预览。镜像里除了分析数据的包，还有一条出文档的命令 `convert-doc`（Markdown 转 PDF / Word、PPT 排成 PDF，见下面“出文档”）。
 
 ## 隔离
 
@@ -17,7 +17,7 @@
 
 进程数有两道：`--ulimit nproc` 管沙箱里看得到的进程，准；`--pids-limit` 在 gVisor 下数的是宿主上的线程（gVisor 自己空转就占 40 个左右），只当兜底、设得宽（512）。
 
-镜像一个两用：服务自己用它跑，跑命令的容器也用它。命令能用的是系统 Python 3.12 和 `runtime/requirements.in` 里的包：分析数据的（numpy、pandas、matplotlib、seaborn、scipy、openpyxl、xlrd、tabulate、charset-normalizer）和读写文档的（python-docx、python-pptx、pypdf、weasyprint），另有 pandoc 和 `convert-doc`。图表里的中文用文泉驿微米黑（matplotlib 默认就用它），文档里的中文用 Noto Sans CJK SC。服务自己的代码和 `docker` 命令行在 `/app`，沙箱里的用户进不去。镜像 1.0 GB（加文档这一套之前 641 MB，多出来的主要是 Noto CJK 字体和 pandoc）。
+镜像一个两用：服务自己用它跑，跑命令的容器也用它。命令能用的是系统 Python 3.12 和 `runtime/requirements.in` 里的包：分析数据的（numpy、pandas、matplotlib、seaborn、scipy、openpyxl、xlrd、tabulate、charset-normalizer）和读写文档的（python-docx、python-pptx、pypdf、weasyprint），另有 pandoc、LibreOffice（只装了 Impress，不带界面）和 `convert-doc`。图表里的中文用文泉驿微米黑（matplotlib 默认就用它），文档里的中文用 Noto Sans CJK SC。服务自己的代码和 `docker` 命令行在 `/app`，沙箱里的用户进不去。镜像 1.35 GB（加文档这一套之前 641 MB：Noto CJK 字体和 pandoc 约 370 MB，LibreOffice 约 340 MB）。
 
 ## 这个服务自己的风险
 
@@ -78,12 +78,13 @@
 
 ## 出文档
 
-`convert-doc` 把一份 Markdown 或 HTML 转成 PDF、Word，输出格式看输出文件的后缀：
+`convert-doc` 把一份 Markdown 或 HTML 转成 PDF、Word，把一份 PPT 排成 PDF，输出格式看输出文件的后缀：
 
 ```bash
 convert-doc 报告.md outputs/报告.pdf
 convert-doc 报告.md outputs/报告.docx
 convert-doc 页面.html outputs/页面.pdf      # HTML 只能转 PDF
+convert-doc outputs/汇报.pptx outputs/汇报.pdf   # PPT 只能转 PDF，一张幻灯片一页
 ```
 
 排版是固定的。让模型每次自己写排版代码的话，同一份报告每次转出来不一样，中文字体、分页、表格宽度这些坑也要每次重踩一遍；固定下来，模型只管把内容写对。成功时输出一句写了什么（页数、大小），有取不到的图、画不了的公式也在这句后面说清楚；失败时退出码非 0，标准错误里一句话。这些话原样给到模型，用英文。
@@ -95,6 +96,7 @@ Markdown 按聊天页面的规矩读（GFM，单个换行就是换行，`$…$`�
 - **PDF**：pandoc 出 HTML，WeasyPrint 排成 A4，带页码和书签。样式在 `runtime/document.css`。
 - **Word**：pandoc 直接出。样式模板 `reference.docx` 在构建镜像时由 `runtime/make_reference_docx.py` 生成（仓库里不放二进制文件），公式是 Word 自己的公式，可以接着改。
 - 沙箱不联网，文档里引用的网上的图取不到，会留下图的说明文字并在输出里列出来。本地的图按文档所在目录、当前目录找。
+- **PPT**：LibreOffice（Impress）排成 PDF，一张幻灯片一页。为的是看得到每一页排出来的样子：python-pptx 只管把形状写进文件，不会排，图伸出页面、字压在图上都要排出来才看得见（2026-11-12 真实模型做的两份 PPT，15 页里有 1 页是这样）。只认 `.pptx`。
 
 几处是实测踩了坑才这样做的（2026-11-12，dev，和正式一样的隔离参数：gVisor、1 核、1 GiB）：
 
@@ -102,6 +104,14 @@ Markdown 按聊天页面的规矩读（GFM，单个换行就是换行，`$…$`�
 - **表情字体抢数字**：Noto Color Emoji 里也有 0–9（全角那么宽）。网页常见的字体清单会点表情字体的名（Bootstrap 默认就这样写），数字就被它画成了全角的。`runtime/fonts-emoji.conf` 把“按名字要表情字体”的请求去掉；表情本身靠缺字时的回退照样画成彩色的。
 - **高亮过的代码很慢**：pandoc 给每行代码套一个 `inline-block`，WeasyPrint 排 260 行要 23 秒，比一页长的代码块还分不了页。改成每行单独一块之后是 8 秒、能分页。高亮的代码每行约 20 毫秒，不高亮的 1.5 毫秒，所以超过 1000 行就不高亮了，免得排到超时。
 - **表格**：格子里的数字、单词不拦腰断开（“1,000”不会变成两行）；这样列多的表格可能比页面宽，就按内容估出每列最窄要多宽，放不下换小一号字（两档），还放不下才允许任意断。Word 那边 pandoc 默认把各列写成一样宽，LibreOffice 打开不会自己调，所以由 `runtime/table_widths.lua` 按内容把列宽定好。
+
+PPT 这边要知道的几件事（2026-11-12，同样的隔离参数下实测）：
+
+- **字体是换过的**：沙箱里没有微软雅黑、Calibri 这些字体，也装不了（不是自由字体）。点了名又没装的，LibreOffice 都换成 Noto Sans CJK SC（实测微软雅黑、宋体、楷体、Calibri、Arial 都是，宋体、楷体也成了黑体的样子）。字的宽度和原来的不完全一样，换行的位置可能和 PowerPoint、WPS 里看到的略有出入。幻灯片里点了哪些没装的字体，`convert-doc` 在输出里列出来（主题、版式里默认的字体不列：不知道用没用上）。
+- **LibreOffice 把结果写成“输入的文件名.pdf”**，所以先写进 `/tmp` 里的临时目录，再挪到要的路径；它的用户配置目录也在那里。`/tmp` 是内存盘，算进 1 GiB 的上限。
+- **读不了的文件它也是退出码 0**，只是什么都不写：按“没有产出”判断。加了密码的 `.pptx` 是另一种容器，开头不是 zip，先挡掉。
+- **超时自己停**：100 秒没排完就连同它起的 `soffice.bin` 一起杀掉（单独一个进程组），留下一句话说原因，不等服务来杀整个容器。
+- 每条命令是新容器，LibreOffice 每次都是第一次启动（建配置目录约 1–2 秒），算在下面的耗时里。
 
 实测的耗时和内存（同上的环境，命令的上限是 120 秒、1 GiB）：
 
@@ -111,6 +121,8 @@ Markdown 按聊天页面的规矩读（GFM，单个换行就是换行，`$…$`�
 | 23 页的报告 | 7 秒，380 MB | 2 秒，250 MB |
 | 260 行高亮代码加几张宽表格（6 页） | 8 秒，300 MB | 0.6 秒，220 MB |
 | 一张网页（HTML） | 2 秒，200 MB | 不支持 |
+| 8 张的 PPT（4 张图表、1 个表格） | 5 秒，410 MB | 不支持 |
+| 40 张的 PPT（20 张图表、20 个表格） | 9 秒，550 MB | 不支持 |
 
 Word 文件是用 LibreOffice 排成 PDF 看的（标题、列表、表格、代码、页码、公式都在）；没有在 Microsoft Word、WPS 里打开核对过。
 
@@ -134,9 +146,9 @@ uv run pytest -q        # 用一个假的 docker 脚本在本机直接跑命令�
 ruff check . && ruff format --check .
 ```
 
-真实的隔离只能在装了 gVisor 的机器上验：`docker exec -i sandbox-service python - < scripts/smoke_sandbox.py`（部署流水线每次都跑），它真起容器，检查内核是 gVisor、断网、只读的地方写不了、图表里的中文画得出来、一份报告转得成 PDF 和 Word（图和公式都在、钱数没被当成公式、数字没被表情字体画）、超时、内存和进程数上限生效、跑完不留容器。
+真实的隔离只能在装了 gVisor 的机器上验：`docker exec -i sandbox-service python - < scripts/smoke_sandbox.py`（部署流水线每次都跑），它真起容器，检查内核是 gVisor、断网、只读的地方写不了、图表里的中文画得出来、一份报告转得成 PDF 和 Word（图和公式都在、钱数没被当成公式、数字没被表情字体画）、一份 PPT 排得成 PDF（一张一页、中文和图都在、换了字体会说）、超时、内存和进程数上限生效、跑完不留容器。
 
-`convert-doc` 的单测（`tests/test_convert_doc.py`）只管不靠 pandoc 和排版程序的那部分；真转一份文档在冒烟里跑。改排版（`runtime/document.css`、`make_reference_docx.py`、`table_widths.lua`）要在 dev 上起临时镜像真转一份，把 PDF 取回来看。
+`convert-doc` 的单测（`tests/test_convert_doc.py`）只管不靠 pandoc 和排版程序的那部分；真转一份文档在冒烟里跑。改排版（`runtime/document.css`、`make_reference_docx.py`、`table_widths.lua`）要在 dev 上起临时镜像真转一份，把 PDF 取回来看。PPT 那部分的单测用一个假的 LibreOffice，只管参数、挪文件、超时和报错。
 
 改沙箱里的包：改 `runtime/requirements.in`，按文件头上的命令重新生成 `runtime/requirements.txt`。
 

@@ -16,10 +16,12 @@ ARG PIP_INDEX_URL=https://pypi.org/simple
 # - fonts-wqy-microhei：图表里的中文（matplotlib 用它，见 runtime/matplotlibrc）。
 # - fonts-noto-cjk：文档里的中文，有粗体；fonts-dejavu-core 是西文和符号，fonts-noto-color-emoji 是表情。
 # - pandoc 读 Markdown、出 Word；libpango、libharfbuzz-subset 是 weasyprint（出 PDF）要的系统库。见 runtime/convert_doc.py。
+# - libreoffice-impress-nogui：把 PPT 排成 PDF（看得到每一页排出来的样子），只装 Impress、不带界面，镜像大约多 340 MB。
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         fonts-wqy-microhei fonts-noto-cjk fonts-dejavu-core fonts-noto-color-emoji tzdata \
         pandoc libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
+        libreoffice-impress-nogui \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 sandbox \
     && useradd --uid 10001 --gid 10001 --home-dir /tmp --no-create-home --shell /bin/bash sandbox

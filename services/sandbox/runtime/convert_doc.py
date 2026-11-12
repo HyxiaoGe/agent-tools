@@ -1,11 +1,12 @@
 #!/usr/local/bin/python3
-"""convert-doc：把一份 Markdown 或 HTML 转成 PDF、Word（.docx）或单个 HTML 文件。
+"""convert-doc：把一份 Markdown 或 HTML 转成 PDF、Word（.docx）或单个 HTML 文件，把一份 PPT（.pptx）排成 PDF。
 
 沙箱里的命令用，镜像里是 /usr/local/bin/convert-doc：
 
     convert-doc 报告.md outputs/报告.pdf
     convert-doc 报告.md outputs/报告.docx
     convert-doc 页面.html outputs/页面.pdf
+    convert-doc outputs/汇报.pptx outputs/汇报.pdf
 
 排版是固定的（document.css、构建镜像时生成的 reference.docx），同一份文档每次转出来一个样子，不用调用方自己写排版代码：
 - Markdown 按聊天页面的写法读：GFM（表格、删除线、任务列表、裸链接），单个换行就是换行，
@@ -16,6 +17,8 @@
 - Word：pandoc 直接出，样式来自 reference.docx（见 make_reference_docx.py），公式是 Word 自己的公式，
   表格各列的宽度按内容定（table_widths.lua）。
 - 沙箱不联网：文档里引用的网上的图取不到，留下说明文字，并在输出里说一声。本地的图按输入文件所在目录和当前目录找。
+- PPT：LibreOffice（Impress）排，一张幻灯片一页，为的是看得到每一页排出来的样子（python-pptx 只管写文件，不会排）。
+  沙箱里没有微软雅黑这些字体，点了名又没装的都换成 Noto Sans CJK SC，换了哪些在输出里说。
 
 给调用方看的话都用英文（会原样给到模型）。出错退出码非 0，标准错误里一句话说清原因。
 """
@@ -26,12 +29,16 @@ import argparse
 import base64
 import html as html_lib
 import logging
+import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import unicodedata
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -39,9 +46,18 @@ HERE = Path(__file__).resolve().parent
 # gfm：CommonMark + GitHub 的表格、删除线、任务列表、裸链接，和聊天页面的渲染对得上；
 # pandoc 自己的 markdown 方言多出来的写法（缩进四格算代码、开头的 --- 算元数据、@ 算引用）会把模型写的普通文字认错。
 READER = "gfm+hard_line_breaks+tex_math_dollars"
-INPUTS = {".md": "markdown", ".markdown": "markdown", ".txt": "markdown", ".html": "html", ".htm": "html"}
+INPUTS = {
+    ".md": "markdown",
+    ".markdown": "markdown",
+    ".txt": "markdown",
+    ".html": "html",
+    ".htm": "html",
+    ".pptx": "slides",
+}
 OUTPUTS = (".pdf", ".docx", ".html")
 PANDOC_TIMEOUT_S = 100  # 沙箱里一条命令最长 120 秒，自己先停下来才说得清原因
+SOFFICE_TIMEOUT_S = 100  # 同上。实测（dev，沙箱里一个核）8 页约 5 秒，40 页带图表约 9 秒
+SLIDE_XML_BYTES = 20 * 1024 * 1024  # 找字体名时，一张幻灯片的 XML 比这还大的不读
 # 公式的字号（像素）：正文 10.5 磅是 14 像素；数学字体 STIX Two 的小写字母比正文的字体矮，放大一成看着才一样大
 MATH_PX = 15.5
 # 公式里的中文用的字体：ziamath 只认单个的 TrueType 字体，构建镜像时从文泉驿微米黑拆出来（见 make_math_font.py）
@@ -77,6 +93,9 @@ _BR = re.compile(r"<br\s*/?>")
 _TOKEN = re.compile(r"[^\s\u2e80-\u9fff\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]+")
 # 数学字体里没有的宽字：中日韩文字、全角标点
 _WIDE = re.compile(r"([\u2e80-\u9fff\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]+)")
+_SLIDE = re.compile(r"ppt/slides/slide\d+\.xml")
+# 幻灯片里给一段字点的字体：<a:latin typeface="微软雅黑"/>（西文）、<a:ea …/>（中日韩）、<a:cs …/>、<a:sym …/>
+_TYPEFACE = re.compile(r'<a:(?:latin|ea|cs|sym)\b[^>]*?\btypeface="([^"]*)"')
 
 
 class ConvertError(Exception):
@@ -515,6 +534,98 @@ def html_to_pdf(html: str, base: Path, output: Path) -> tuple[int, list[str], in
     return len(document.pages), missing, failed
 
 
+# ---------- PPT ----------
+
+
+def asked_fonts(source: Path) -> list[str]:
+    """PPT 的幻灯片里点了名的字体，按出现的先后。以 + 开头的是“跟主题走”（+mn-lt 这种），不算；读不了的文件回空。"""
+    found: dict[str, None] = {}
+    try:
+        with zipfile.ZipFile(source) as package:
+            for item in package.infolist():
+                if not _SLIDE.fullmatch(item.filename) or item.file_size > SLIDE_XML_BYTES:
+                    continue
+                for name in _TYPEFACE.findall(package.read(item).decode("utf-8", "replace")):
+                    name = html_lib.unescape(name).strip()
+                    if name and not name.startswith("+"):
+                        found.setdefault(name)
+    except (OSError, zipfile.BadZipFile, RuntimeError, NotImplementedError):  # 后两个：加了密码、没见过的压缩方式
+        return []
+    return list(found)
+
+
+def installed_fonts() -> set[str] | None:
+    """这里装了哪些字体（名字都转成小写，一种字体的几个叫法都算）。问不到回 None。"""
+    try:
+        done = subprocess.run(
+            ["fc-list", "--format", "%{family}\n"], capture_output=True, text=True, timeout=20, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if done.returncode != 0:
+        return None
+    return {name.strip().lower() for line in done.stdout.splitlines() for name in line.split(",") if name.strip()}
+
+
+def replaced_fonts(asked: list[str], installed: set[str] | None) -> list[str]:
+    """点了名、这里又没装的字体：排的时候换成了相近的。问不到装了哪些就不说。"""
+    if installed is None:
+        return []
+    return [name for name in asked if name.lower() not in installed]
+
+
+def slides_to_pdf(source: Path, output: Path) -> tuple[int, list[str]]:
+    """PPT → PDF，一张幻灯片一页。返回（页数，换掉的字体）。
+
+    LibreOffice 把结果写成“输入的文件名.pdf”，所以先让它写进一个临时目录，再挪到要的地方。
+    它的用户配置目录也放在临时目录里：沙箱的根文件系统只读，每条命令又是新容器，留不下来也不用留。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        made = Path(tmp) / "out"
+        args = [
+            "soffice",
+            "--headless",
+            "--norestore",
+            f"-env:UserInstallation={(Path(tmp) / 'profile').as_uri()}",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            str(made),
+            str(source),
+        ]
+        try:
+            # 单独一个进程组：soffice 是个脚本，真干活的是它起的 soffice.bin，超时要连它一起停
+            process = subprocess.Popen(
+                args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
+            )
+        except FileNotFoundError:
+            raise ConvertError("LibreOffice is not available in this environment") from None
+        try:
+            process.wait(timeout=SOFFICE_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            raise ConvertError(
+                f"laying out the slides took longer than {SOFFICE_TIMEOUT_S} seconds; "
+                "use fewer slides or smaller pictures"
+            ) from None
+        results = sorted(made.glob("*.pdf")) if made.is_dir() else []
+        if len(results) != 1:
+            # 读不了的文件 LibreOffice 也是退出码 0，只是什么都不写
+            raise ConvertError("the presentation could not be opened; the file may be damaged")
+        shutil.move(str(results[0]), output)
+    try:
+        from pypdf import PdfReader
+
+        pages = len(PdfReader(str(output)).pages)
+    except Exception:  # noqa: BLE001  数不出页数不算没转成
+        pages = 0
+    return pages, replaced_fonts(asked_fonts(source), installed_fonts())
+
+
 # ---------- 入口 ----------
 
 
@@ -531,31 +642,47 @@ def _nearby(source: Path) -> str:
 
 
 def convert(source: Path, output: Path, title: str | None = None) -> str:
-    """转一份。返回给调用方看的话（写了什么、多大、有没有取不到的图、画不了的公式）。"""
+    """转一份。返回给调用方看的话（写了什么、多大、有没有取不到的图、画不了的公式、换掉的字体）。"""
     kind = INPUTS.get(source.suffix.lower())
     target = output.suffix.lower()
     if kind is None:
         got = source.suffix or "a file without an extension"
-        raise ConvertError(f"cannot read {got}; the input must be Markdown (.md) or HTML (.html)")
+        raise ConvertError(
+            f"cannot read {got}; the input must be Markdown (.md), HTML (.html), or a presentation (.pptx)"
+        )
     if target not in OUTPUTS:
         got = output.suffix or "a file without an extension"
         raise ConvertError(f"cannot write {got}; the output must end in .pdf, .docx, or .html")
     if kind == "html" and target != ".pdf":
         raise ConvertError("an HTML file can only be converted to .pdf")
+    if kind == "slides" and target != ".pdf":
+        raise ConvertError("a presentation (.pptx) can only be converted to .pdf")
     if not source.is_file():
         raise ConvertError(f"{source} does not exist{_nearby(source)}")
-    try:
-        text = source.read_text(encoding="utf-8-sig")
-    except UnicodeDecodeError:
-        raise ConvertError(f"{source} is not UTF-8 text") from None
-    if not text.strip():
-        raise ConvertError(f"{source} is empty")
-    output.parent.mkdir(parents=True, exist_ok=True)
-
     where = source.resolve()
     missing: list[str] = []
+    replaced: list[str] = []
     pages = failed = 0
-    if kind == "html":
+    text = ""
+    if kind == "slides":
+        with source.open("rb") as file:
+            head = file.read(4)
+        if not head:
+            raise ConvertError(f"{source} is empty")
+        if head != b"PK\x03\x04":  # .pptx 是个 zip；加了密码的是另一种容器
+            raise ConvertError(f"{source} is not a .pptx file, or it is password-protected")
+    else:
+        try:
+            text = source.read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            raise ConvertError(f"{source} is not UTF-8 text") from None
+        if not text.strip():
+            raise ConvertError(f"{source} is empty")
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    if kind == "slides":
+        pages, replaced = slides_to_pdf(where, output)
+    elif kind == "html":
         pages, missing, failed = html_to_pdf(text, where.parent, output)
     else:
         text = prepare(text)
@@ -586,19 +713,29 @@ def convert(source: Path, output: Path, title: str | None = None) -> str:
         )
     if failed:
         notes.append(f"{failed} formula(s) could not be typeset and appear as TeX source.")
+    if replaced:
+        shown = ", ".join(replaced[:5]) + (f", and {len(replaced) - 5} more" if len(replaced) > 5 else "")
+        notes.append(
+            f"Fonts that are not installed here were replaced with similar ones: {shown}. "
+            "Line breaks can differ slightly from what PowerPoint shows."
+        )
     return "\n".join(notes)
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="convert-doc",
-        description="Convert a Markdown (.md) or HTML (.html) file to PDF, Word (.docx), or a standalone HTML file. "
-        "The output format follows the output file's extension. Layout and fonts are fixed, "
+        description="Convert a Markdown (.md) or HTML (.html) file to PDF, Word (.docx), or a standalone HTML file, "
+        "or render a presentation (.pptx) as a PDF with one slide per page. "
+        "The output format follows the output file's extension. For Markdown and HTML, layout and fonts are fixed, "
         "so the result looks the same every time.",
     )
-    ap.add_argument("input", help="the Markdown or HTML file to convert")
+    ap.add_argument("input", help="the Markdown, HTML, or .pptx file to convert")
     ap.add_argument("output", help="where to write the result; must end in .pdf, .docx, or .html")
-    ap.add_argument("--title", help="document title for the file's metadata (default: the first top-level heading)")
+    ap.add_argument(
+        "--title",
+        help="document title for the file's metadata (default: the first top-level heading); Markdown input only",
+    )
     args = ap.parse_args(argv)
     # 用到的库有的直接往根日志里写提醒；给根日志一个不出声的去处，免得这些话混进给调用方看的输出
     logging.getLogger().addHandler(logging.NullHandler())

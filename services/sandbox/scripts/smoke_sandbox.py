@@ -1,7 +1,8 @@
 """部署冒烟：在 sandbox-service 容器内真跑几条命令，确认隔离在、装的包能用、超时杀得掉、文件取得回来。
 
-一共起六个沙箱容器：分析表格出图（顺带查内核是 gVisor、断网、改不了只读的地方）、不留 __pycache__、
-把一份报告转成 PDF 和 Word、超时、进程数上限、内存上限（会真的占满 1 GiB 再被杀掉，一两秒）。不经网关，不占每日次数。
+一共起七个沙箱容器：分析表格出图（顺带查内核是 gVisor、断网、改不了只读的地方）、不留 __pycache__、
+把一份报告转成 PDF 和 Word、做一份 PPT 再排成 PDF、超时、进程数上限、内存上限（会真的占满 1 GiB 再被杀掉，一两秒）。
+不经网关，不占每日次数。
 
 用法：docker exec -i sandbox-service python - < scripts/smoke_sandbox.py
 """
@@ -136,6 +137,62 @@ print(json.dumps(facts, ensure_ascii=False))
 PY
 """
 
+# 一份三张的 PPT（标题、第一步画的图、表格），字体点的是这里没有的微软雅黑：排成 PDF 以后一张一页、中文和图都在，
+# 输出里要说换了字体
+SLIDES = r"""
+set -e
+python - <<'PY'
+from pptx import Presentation
+from pptx.util import Inches, Pt
+
+deck = Presentation()
+deck.slide_width, deck.slide_height = Inches(13.333), Inches(7.5)
+
+
+def text(slide, words, top, size):
+    box = slide.shapes.add_textbox(Inches(0.8), Inches(top), Inches(11.5), Inches(1))
+    run = box.text_frame.paragraphs[0].add_run()
+    run.text, run.font.size, run.font.name = words, Pt(size), "微软雅黑"
+
+
+first = deck.slides.add_slide(deck.slide_layouts[6])
+text(first, "季度汇报", 2.6, 44)
+second = deck.slides.add_slide(deck.slide_layouts[6])
+text(second, "各月销售额", 0.4, 28)
+second.shapes.add_picture("outputs/图表.png", Inches(0.8), Inches(1.5), height=Inches(5.2))
+third = deck.slides.add_slide(deck.slide_layouts[6])
+table = third.shapes.add_table(2, 2, Inches(0.8), Inches(1.5), Inches(8), Inches(1.6)).table
+for at, words in enumerate(("月份", "销售额", "一月", "120")):
+    table.cell(at // 2, at % 2).text = words
+deck.save("outputs/汇报.pptx")
+PY
+convert-doc outputs/汇报.pptx outputs/汇报.pdf
+python - <<'PY'
+import json
+
+from pypdf import PdfReader
+
+reader = PdfReader("outputs/汇报.pdf")
+names = set()
+drawn = []
+for page in reader.pages:
+    for font in (page["/Resources"].get("/Font") or {}).values():
+        names.add(str(font.get_object()["/BaseFont"]))
+    # LibreOffice 让每一页共用一份资源表，光看表里有没有图分不出是哪一页的：看这一页的内容里画了哪几张
+    body = page.get_contents().get_data()
+    drawn.append(sum(f"{name} Do".encode() in body for name in page["/Resources"].get("/XObject") or {}))
+facts = {
+    "pages": len(reader.pages),
+    "text": [page.extract_text()[:20] for page in reader.pages],
+    "pictures": drawn,
+    "fonts": sorted(names),
+    "width": round(float(reader.pages[0].mediabox.width)),
+    "height": round(float(reader.pages[0].mediabox.height)),
+}
+print(json.dumps(facts, ensure_ascii=False))
+PY
+"""
+
 FORK = r"""python - <<'PY'
 import os, sys, time
 children = 0
@@ -259,19 +316,45 @@ def main():
     check(result["duration_ms"] < 40_000, f"conversion took too long: {result['duration_ms']} ms")
     print(f"documents ok in {result['duration_ms']} ms, python-pptx {facts['pptx']}")
 
-    # 4. 超时
+    # 4. PPT 排成 PDF：一张一页，中文和图都在
+    result = run(SLIDES)
+    check(result["exit_code"] == 0, f"slides exited {result['exit_code']}: {result['stderr'][-600:]}")
+    notes, _, last = result["stdout"].strip().rpartition("\n")
+    facts = json.loads(last)
+    check("outputs/汇报.pdf (3 pages" in notes, f"unexpected conversion note: {notes}")
+    check("replaced with similar ones: 微软雅黑." in notes, f"replaced fonts not reported: {notes}")
+    check(
+        facts["pages"] == 3 and (facts["width"], facts["height"]) == (960, 540), f"slides are not one per page: {facts}"
+    )
+    check("季度汇报" in facts["text"][0] and "月份" in facts["text"][2], f"slide text is not readable: {facts}")
+    check(facts["pictures"] == [0, 1, 0], f"the chart is not on the second slide: {facts}")
+    check("cjk" in " ".join(facts["fonts"]).lower(), f"slides are missing the Chinese font: {facts}")
+    changed = {item["path"] for item in result["changed"]}
+    check({"outputs/汇报.pptx", "outputs/汇报.pdf"} <= changed, f"slides missing from changed: {sorted(changed)}")
+    check(
+        not any(
+            path.startswith("outputs/") and path not in ("outputs/汇报.pptx", "outputs/汇报.pdf") for path in changed
+        ),
+        f"conversion left extra files in outputs/: {sorted(changed)}",
+    )
+    status, raw = call("GET", f"/v1/workspaces/{WORKSPACE}/file", params={"path": "outputs/汇报.pdf"})
+    check(status == 200 and raw.startswith(b"%PDF-") and len(raw) > 5000, "outputs/汇报.pdf is not a real PDF")
+    check(result["duration_ms"] < 60_000, f"slides took too long: {result['duration_ms']} ms")
+    print(f"slides ok in {result['duration_ms']} ms")
+
+    # 5. 超时
     result = run("echo started; sleep 60", timeout_seconds=2)
     check(result["killed"] == "timeout" and result["stdout"] == "started\n", f"timeout not enforced: {result}")
     check(result["duration_ms"] < 20_000, f"timeout took too long: {result['duration_ms']} ms")
     print(f"timeout ok in {result['duration_ms']} ms")
 
-    # 5. 进程数上限
+    # 6. 进程数上限
     result = run(FORK, timeout_seconds=30)
     count, _, reason = result["stdout"].strip().partition(" ")
     check(count.isdigit() and int(count) < 200 and reason != "unlimited", f"process limit not enforced: {result}")
     print(f"process limit ok: stopped at {count} ({reason})")
 
-    # 6. 内存上限：要的比上限多，整个沙箱被系统杀掉，服务要说得出原因
+    # 7. 内存上限：要的比上限多，整个沙箱被系统杀掉，服务要说得出原因
     result = run("python -c \"x = b'a' * (3 * 1024 ** 3); print(len(x))\"", timeout_seconds=60)
     check(result["killed"] == "memory" and result["exit_code"] == 137, f"memory limit not enforced: {result}")
     print(f"memory limit ok in {result['duration_ms']} ms")

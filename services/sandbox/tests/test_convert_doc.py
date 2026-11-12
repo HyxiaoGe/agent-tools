@@ -380,3 +380,161 @@ def test_main_prints_one_line_and_fails(tmp_path: Path, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.startswith("convert-doc: ") and captured.err.count("\n") == 1
+
+
+# ---------- PPT ----------
+
+
+def _deck(path: Path, slides: dict[str, str]) -> Path:
+    """一个只有几张幻灯片 XML 的 zip：找字体名只看这些。"""
+    import zipfile
+
+    with zipfile.ZipFile(path, "w") as package:
+        for name, body in slides.items():
+            package.writestr(name, body)
+    return path
+
+
+def test_asked_fonts_lists_named_fonts_in_slide_order(tmp_path: Path):
+    first = (
+        '<a:rPr lang="zh-CN"><a:latin typeface="微软雅黑"/><a:ea typeface="微软雅黑"/></a:rPr>'
+        '<a:rPr><a:latin typeface="+mn-lt"/><a:cs typeface="Arial" panose="020B0604020202020204"/></a:rPr>'
+    )
+    second = '<a:rPr b="1"><a:latin panose="x" typeface="AT&amp;T Sans"/><a:sym typeface=""/></a:rPr>'
+    deck = _deck(
+        tmp_path / "汇报.pptx",
+        {
+            "ppt/slides/slide1.xml": first,
+            "ppt/slides/slide2.xml": second,
+            # 主题、版式里的不算：没有哪段字点它的名，就不知道用没用上
+            "ppt/theme/theme1.xml": '<a:latin typeface="Calibri"/>',
+            "ppt/slideLayouts/slideLayout1.xml": '<a:latin typeface="Georgia"/>',
+        },
+    )
+    assert convert_doc.asked_fonts(deck) == ["微软雅黑", "Arial", "AT&T Sans"]
+
+
+def test_asked_fonts_gives_up_quietly_on_a_broken_file(tmp_path: Path):
+    broken = tmp_path / "坏.pptx"
+    broken.write_bytes(b"PK\x03\x04 not really a zip")
+    assert convert_doc.asked_fonts(broken) == []
+    assert convert_doc.asked_fonts(tmp_path / "没有.pptx") == []
+
+
+def test_asked_fonts_skips_oversized_slides(tmp_path: Path, monkeypatch):
+    deck = _deck(tmp_path / "大.pptx", {"ppt/slides/slide1.xml": '<a:latin typeface="微软雅黑"/>' + " " * 200})
+    monkeypatch.setattr(convert_doc, "SLIDE_XML_BYTES", 100)
+    assert convert_doc.asked_fonts(deck) == []
+
+
+def test_replaced_fonts_are_the_named_ones_not_installed():
+    installed = {"noto sans cjk sc", "dejavu sans", "文泉驿微米黑"}
+    asked = ["微软雅黑", "DejaVu Sans", "文泉驿微米黑", "Arial"]
+    assert convert_doc.replaced_fonts(asked, installed) == ["微软雅黑", "Arial"]
+    # 问不到装了哪些字体：不乱说
+    assert convert_doc.replaced_fonts(["微软雅黑"], None) == []
+
+
+def test_convert_only_turns_slides_into_pdf(tmp_path: Path):
+    deck = _deck(tmp_path / "汇报.pptx", {"ppt/slides/slide1.xml": "<p:sld/>"})
+    with pytest.raises(convert_doc.ConvertError, match=r"presentation \(\.pptx\) can only be converted to \.pdf"):
+        convert_doc.convert(deck, tmp_path / "out.docx")
+
+
+def test_convert_checks_the_slides_file_before_starting_libreoffice(tmp_path: Path, monkeypatch):
+    def never(*args, **kwargs):
+        raise AssertionError("LibreOffice should not be started")
+
+    monkeypatch.setattr(convert_doc.subprocess, "Popen", never)
+    with pytest.raises(convert_doc.ConvertError, match="does not exist"):
+        convert_doc.convert(tmp_path / "没有.pptx", tmp_path / "out.pdf")
+    empty = tmp_path / "空.pptx"
+    empty.write_bytes(b"")
+    with pytest.raises(convert_doc.ConvertError, match="is empty"):
+        convert_doc.convert(empty, tmp_path / "out.pdf")
+    old = tmp_path / "老格式.pptx"
+    old.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64)
+    with pytest.raises(convert_doc.ConvertError, match=r"not a \.pptx file, or it is password-protected"):
+        convert_doc.convert(old, tmp_path / "out.pdf")
+
+
+def _fake_soffice(monkeypatch, behave):
+    """把 LibreOffice 换成一个假的：behave(参数, 输出目录) 决定它写什么。记下每次的参数。"""
+    calls: list[list[str]] = []
+
+    class Process:
+        pid = 4_000_000  # 没有这个进程：超时去停它时不会停到别人
+
+        def __init__(self, args, **kwargs):
+            calls.append(list(args))
+            assert kwargs.get("start_new_session") is True
+            self.waits = 0
+            self.args = args
+
+        def wait(self, timeout=None):
+            self.waits += 1
+            return behave(self, Path(self.args[self.args.index("--outdir") + 1]), timeout)
+
+    monkeypatch.setattr(convert_doc.subprocess, "Popen", Process)
+    monkeypatch.setattr(convert_doc, "installed_fonts", lambda: {"noto sans cjk sc"})
+    return calls
+
+
+def test_convert_slides_moves_the_result_and_reports_replaced_fonts(tmp_path: Path, monkeypatch):
+    deck = _deck(
+        tmp_path / "季度 汇报.pptx",
+        {"ppt/slides/slide1.xml": '<a:ea typeface="微软雅黑"/><a:latin typeface="Noto Sans CJK SC"/>'},
+    )
+
+    def behave(process, made: Path, timeout):
+        made.mkdir(parents=True)
+        (made / "季度 汇报.pdf").write_bytes(b"%PDF-1.7 fake")
+        return 0
+
+    calls = _fake_soffice(monkeypatch, behave)
+    out = tmp_path / "outputs" / "结果.pdf"
+    said = convert_doc.convert(deck, out)
+    assert out.read_bytes() == b"%PDF-1.7 fake"
+    args = calls[0]
+    assert args[:3] == ["soffice", "--headless", "--norestore"] and args[-1] == str(deck.resolve())
+    assert args[args.index("--convert-to") + 1] == "pdf"
+    # 用户配置目录、临时的输出目录都不在工作目录里，转完就没了
+    profile = next(a for a in args if a.startswith("-env:UserInstallation=file://"))
+    assert str(tmp_path) not in profile and not Path(args[args.index("--outdir") + 1]).exists()
+    assert said.splitlines()[0] == f"Wrote {out} (1 KB)."  # 假的 PDF 数不出页数，就不写页数
+    assert "replaced with similar ones: 微软雅黑." in said and "Noto Sans CJK SC" not in said
+
+
+def test_convert_slides_fails_clearly_when_nothing_was_written(tmp_path: Path, monkeypatch):
+    deck = _deck(tmp_path / "汇报.pptx", {"ppt/slides/slide1.xml": "<p:sld/>"})
+    _fake_soffice(monkeypatch, lambda process, made, timeout: 0)
+    with pytest.raises(convert_doc.ConvertError, match="could not be opened"):
+        convert_doc.convert(deck, tmp_path / "out.pdf")
+    assert not (tmp_path / "out.pdf").exists()
+
+
+def test_convert_slides_stops_libreoffice_on_timeout(tmp_path: Path, monkeypatch):
+    deck = _deck(tmp_path / "汇报.pptx", {"ppt/slides/slide1.xml": "<p:sld/>"})
+    killed: list[tuple[int, int]] = []
+
+    def behave(process, made: Path, timeout):
+        if process.waits == 1:
+            raise convert_doc.subprocess.TimeoutExpired("soffice", timeout)
+        return -9
+
+    _fake_soffice(monkeypatch, behave)
+    monkeypatch.setattr(convert_doc.os, "killpg", lambda pid, sig: killed.append((pid, sig)))
+    with pytest.raises(convert_doc.ConvertError, match=f"longer than {convert_doc.SOFFICE_TIMEOUT_S} seconds"):
+        convert_doc.convert(deck, tmp_path / "out.pdf")
+    assert killed == [(4_000_000, convert_doc.signal.SIGKILL)]
+
+
+def test_convert_slides_says_so_when_libreoffice_is_missing(tmp_path: Path, monkeypatch):
+    deck = _deck(tmp_path / "汇报.pptx", {"ppt/slides/slide1.xml": "<p:sld/>"})
+
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("soffice")
+
+    monkeypatch.setattr(convert_doc.subprocess, "Popen", missing)
+    with pytest.raises(convert_doc.ConvertError, match="LibreOffice is not available"):
+        convert_doc.convert(deck, tmp_path / "out.pdf")
